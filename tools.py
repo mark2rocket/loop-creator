@@ -29,8 +29,10 @@ TRACK_LABELS = {"standard": "standard loop", "full": "full loop", "gs": "gs loop
 GS_DEPTHS = {"quick": "Quick", "standard": "standard", "full": "Full GS", "full gs": "Full GS", "full-gs": "Full GS", "full_gs": "Full GS"}
 SKILL_ROOT = Path(get_hermes_home()) / "skills" / "strategy" / "loop-harness-creator"
 GS_SOURCE_ROOT = Path.home() / "haven-synk" / "30-Output" / "Teaching" / "lectures-challenges" / "50-harnesses" / "growth-strategy-ralph-kit"
-TRACE_SECTIONS = ["Loop Goal", "Input State", "Action Taken", "Evaluation Surface", "Result", "Failure Taxonomy", "Evidence Update", "Next Loop Condition"]
-TRACE_FIELD_HINTS = ["Target predicate", "Why this loop now", "Starting artifact", "Change made", "Mutation policy applied", "Rubric/test/review used", "Negative assertion checked", "Verdict", "Score or qualitative delta", "Type:", "New evidence added", "Continue / stop / escalate", "Next target"]
+TRACE_SECTIONS = ["Loop Goal", "Input State", "Learning Trace", "Action Taken", "Evaluation Surface", "Result", "Failure Taxonomy", "Evidence Update", "Next Loop Condition"]
+TRACE_FIELD_HINTS = ["Target predicate", "Why this loop now", "Starting artifact", "Current constraint", "Controlled variable", "Prediction before change", "Measurement method", "Expected result", "Observed result", "Study delta", "Act decision", "Learning level", "Change made", "Mutation policy applied", "Rubric/test/review used", "Negative assertion checked", "Verdict", "Score or qualitative delta", "Type:", "New evidence added", "Continue / stop / escalate", "Next target"]
+GOAL_CONTRACT_FIELDS = ["goal_id", "objective", "completion_criteria", "hard_fails", "verification_surface", "budget", "lifecycle_state", "owner", "current_artifact_hash", "stale_update_guard", "next_continuation_condition"]
+LEARNING_TRACE_REQUIRED = ["Current constraint", "Controlled variable", "Prediction before change", "Measurement method", "Observed result", "Study delta", "Act decision", "Learning level"]
 SECRET_RE = re.compile(r"(?i)\b(api[_-]?key|secret|token|cookie|authorization|refresh[_-]?token|access[_-]?token)\s*[:=]\s*([^\s`'\"]{8,})")
 
 
@@ -213,6 +215,42 @@ def _loop_spec_template(track: str, depth: str) -> str:
 """
 
 
+def _goal_contract_template(track: str, depth: str, args: dict[str, Any], run_id: str) -> str:
+    budget = "TODO: token / wall-clock / iteration / cost budget"
+    if track == "standard":
+        budget = "TODO: 5-8 predicate loops or explicit lower bound with reason"
+    elif track == "full":
+        budget = "TODO: 8-15 loops plus replay/regression/transfer evidence budget"
+    elif track == "gs":
+        budget = f"TODO: GS {depth or 'standard'} depth budget and revenue-learning evidence budget"
+    return f"""# Goal Contract
+
+## Persistent Goal State
+- goal_id: `{run_id}`
+- objective: {args.get('outcome') or 'TODO: specific outcome this loop must achieve'}
+- completion_criteria: TODO: observable criteria that make completion auditable
+- hard_fails: TODO: conditions that block PASS/PASS_WITH_RISKS
+- verification_surface: TODO: files, commands, rubrics, reviewer, or live checks used to judge completion
+- budget: {budget}
+- lifecycle_state: active
+- owner: human final approval / harness scaffolding / verifier completion gate
+- current_artifact_hash: TODO: hash, version, or source path of the starting artifact
+- stale_update_guard: goal_id + run_id + iteration_id + artifact_hash must match before state mutation
+- next_continuation_condition: TODO: named failed predicate, remaining hard-fail, material expected gain, or explicit human instruction
+
+## Completion Boundary
+- worker_claim_allowed: candidate_complete only
+- achieved_owner: verifier or human gate only
+- pass_mapping: achieved may map to PASS or PASS_WITH_RISKS only after hard-fails clear
+- budget_limited_rule: soft stop with evidence, remaining work, and next-start condition; not silent success/failure
+
+## Control Surface
+- pause_resume_clear_replace_owner: human/runtime control, not model-inferred
+- replacement_rule: archive previous goal state and issue a new goal_id before continuing
+- pending_input_priority: pending human input or mailbox work preempts autonomous continuation
+"""
+
+
 def _iteration_template(num: int = 1) -> str:
     return f"""# Iteration {num:03d}
 
@@ -224,6 +262,17 @@ def _iteration_template(num: int = 1) -> str:
 - Starting artifact/version:
 - Known evidence:
 - Known uncertainty:
+
+## Learning Trace
+- Current constraint:
+- Controlled variable:
+- Prediction before change:
+- Measurement method:
+- Expected result:
+- Observed result:
+- Study delta:
+- Act decision: continue | mutate | stop | escalate | policy_update_candidate
+- Learning level: single_loop | double_loop
 
 ## Action Taken
 - Change made:
@@ -308,6 +357,7 @@ def create_scaffold(args: dict[str, Any], **kwargs: Any) -> str:
     for d in ["state", "final", "logs"]:
         (run_path / d).mkdir(parents=True, exist_ok=True)
     _write(run_path / "state" / "brief.md", _brief_template(track, depth, args, run_path.name))
+    _write(run_path / "state" / "goal-contract.md", _goal_contract_template(track, depth, args, run_path.name))
     _write(run_path / "state" / "current.md", "# Current Artifact\n\nTODO: paste or link the current artifact/draft here.\n")
     if track == "gs":
         _write(run_path / "state" / "research-notes.md", f"# GS Research Notes\n\n- GS depth: `{depth}`\n- Public research allowed:\n- Revenue baseline / proxy:\n- Payer evidence:\n- Buying trigger evidence:\n- ICP evidence:\n- Channel evidence:\n- Assumptions / Unknowns:\n")
@@ -348,12 +398,30 @@ def _meta(run_path: Path) -> dict[str, Any]:
     return {"track": track, "depth": "" if not depth_match else depth_match.group(1)}
 
 
-def _has_non_todo_value(text: str, label: str) -> bool:
+def _field_value(text: str, label: str) -> str:
     m = re.search(rf"(?im)^\s*-\s*{re.escape(label)}\s*:\s*(.+)$", text)
-    if not m:
-        return False
-    val = m.group(1).strip()
+    return m.group(1).strip() if m else ""
+
+
+def _has_non_todo_value(text: str, label: str) -> bool:
+    val = _field_value(text, label)
     return bool(val and "TODO" not in val and val not in {"`n/a`", "n/a"})
+
+
+def _quality_warnings_for_fields(text: str, labels: list[str], *, path: str, min_chars: int = 24) -> list[dict[str, str]]:
+    warnings: list[dict[str, str]] = []
+    for label in labels:
+        val = _field_value(text, label)
+        if val and "TODO" not in val and len(val.strip(" `")) < min_chars:
+            warnings.append({"type": "quality_warning", "path": path, "message": f"{label} may be too short to be auditable"})
+    return warnings
+
+
+def _normalize_quality_value(value: str) -> str:
+    value = re.sub(r"`[^`]*`", "`X`", value.lower())
+    value = re.sub(r"\b\d+\b", "N", value)
+    value = re.sub(r"iteration-\d+|log\s+\d+|predicate\s+\d+", "item N", value)
+    return re.sub(r"\s+", " ", value).strip()
 
 
 def _check_trace(log_path: Path) -> list[str]:
@@ -368,6 +436,9 @@ def _check_trace(log_path: Path) -> list[str]:
     empty_fields = re.findall(r"(?m)^-\s+([^:\n]+):\s*$", text)
     if empty_fields:
         issues.append(f"blank trace fields: {', '.join(empty_fields[:8])}{'…' if len(empty_fields) > 8 else ''}")
+    for label in LEARNING_TRACE_REQUIRED:
+        if not _has_non_todo_value(text, label):
+            issues.append(f"missing real learning trace value: {label}")
     if "TODO" in text:
         issues.append("contains TODO placeholder")
     if re.search(r"(?i)iteration completed|score improved|revised draft", text):
@@ -377,12 +448,13 @@ def _check_trace(log_path: Path) -> list[str]:
 
 def _validate_path(run_path: Path) -> dict[str, Any]:
     issues: list[dict[str, str]] = []
+    warnings: list[dict[str, str]] = []
     if not run_path.exists() or not run_path.is_dir():
         return {"ok": False, "passable": False, "issues": [{"type": "scaffold_gap", "path": str(run_path), "message": "run folder missing"}], "warnings": []}
     meta = _meta(run_path)
     track = _normalize_track(meta.get("track")) or "standard"
     depth = _normalize_depth(meta.get("depth"), track)
-    required = ["state/brief.md", "state/current.md", "state/research-notes.md", "final/improved-draft.md", "final/review-report.md", "final/user-facing-summary.md", "final/gs-harness.md" if track == "gs" else "final/harness.md"]
+    required = ["state/brief.md", "state/goal-contract.md", "state/current.md", "state/research-notes.md", "final/improved-draft.md", "final/review-report.md", "final/user-facing-summary.md", "final/gs-harness.md" if track == "gs" else "final/harness.md"]
     if track == "full" or depth == "Full GS":
         required.append("final/loop-spec.md")
     if track == "gs":
@@ -394,6 +466,15 @@ def _validate_path(run_path: Path) -> dict[str, Any]:
     for label in ["Artifact / draft", "Reader / evaluator", "Desired outcome", "Constraints / evidence permission"]:
         if not _has_non_todo_value(brief, label):
             issues.append({"type": "brief_gap", "path": "state/brief.md", "message": f"missing or TODO: {label}"})
+    goal_contract = _read(run_path / "state" / "goal-contract.md")
+    for label in GOAL_CONTRACT_FIELDS:
+        if not _has_non_todo_value(goal_contract, label):
+            issues.append({"type": "goal_contract_gap", "path": "state/goal-contract.md", "message": f"missing or TODO: {label}"})
+    if "candidate_complete" not in goal_contract or "achieved_owner" not in goal_contract:
+        issues.append({"type": "goal_contract_gap", "path": "state/goal-contract.md", "message": "completion boundary must distinguish candidate_complete from achieved/PASS"})
+    if "budget_limited" not in goal_contract:
+        issues.append({"type": "goal_contract_gap", "path": "state/goal-contract.md", "message": "budget_limited soft-stop rule missing"})
+    warnings.extend(_quality_warnings_for_fields(goal_contract, ["completion_criteria", "hard_fails", "next_continuation_condition"], path="state/goal-contract.md", min_chars=40))
     if track == "gs":
         for label in ["Company / product / offer", "Target growth outcome", "Target customer / buyer", "Payer / buying trigger / budget authority"]:
             if not _has_non_todo_value(brief, label):
@@ -402,9 +483,22 @@ def _validate_path(run_path: Path) -> dict[str, Any]:
     min_logs = 5 if track == "standard" else 8 if track == "full" else 3 if depth == "Quick" else 9 if depth == "Full GS" else 6
     if len(logs) < min_logs:
         issues.append({"type": "trace_gap", "path": "logs/", "message": f"only {len(logs)} iteration logs; required minimum is {min_logs}"})
+    trace_quality_values: dict[str, list[tuple[str, str]]] = {label: [] for label in ["Prediction before change", "Observed result", "Act decision"]}
     for log in logs:
+        log_rel = str(log.relative_to(run_path))
+        log_text = _read(log)
         for issue in _check_trace(log):
-            issues.append({"type": "trace_gap", "path": str(log.relative_to(run_path)), "message": issue})
+            issues.append({"type": "trace_gap", "path": log_rel, "message": issue})
+        warnings.extend(_quality_warnings_for_fields(log_text, ["Prediction before change", "Observed result", "Act decision"], path=log_rel, min_chars=32))
+        for label in trace_quality_values:
+            value = _field_value(log_text, label)
+            if value and "TODO" not in value:
+                trace_quality_values[label].append((log_rel, value))
+    for label, values in trace_quality_values.items():
+        if len(values) >= 3:
+            normalized = {_normalize_quality_value(value) for _, value in values}
+            if len(normalized) == 1:
+                warnings.append({"type": "quality_warning", "path": "logs/", "message": f"{label} appears copy-pasted across {len(values)} iteration logs"})
     report = _read(run_path / "final" / "review-report.md")
     if "## Loop Trace Summary" not in report:
         issues.append({"type": "trace_gap", "path": "final/review-report.md", "message": "missing Loop Trace Summary"})
@@ -424,7 +518,7 @@ def _validate_path(run_path: Path) -> dict[str, Any]:
     by_type: dict[str, int] = {}
     for issue in issues:
         by_type[issue["type"]] = by_type.get(issue["type"], 0) + 1
-    return {"ok": not any(i["type"] == "scaffold_gap" for i in issues), "passable": len(issues) == 0, "track": track, "depth": depth, "min_logs": min_logs, "log_count": len(logs), "issues": issues, "issue_counts": by_type, "warnings": []}
+    return {"ok": not any(i["type"] == "scaffold_gap" for i in issues), "passable": len(issues) == 0, "track": track, "depth": depth, "min_logs": min_logs, "log_count": len(logs), "issues": issues, "issue_counts": by_type, "warnings": warnings}
 
 
 def validate_run(args: dict[str, Any], **kwargs: Any) -> str:
@@ -451,11 +545,11 @@ def summarize_run(args: dict[str, Any], **kwargs: Any) -> str:
         nxt = re.search(r"(?m)^- Next target:[ \t]*([^\n]*)$", text)
         loop_lines.append({"file": str(log.relative_to(run_path)), "goal": (goal.group(1).strip() or "missing") if goal else "missing", "result": (result.group(1).strip() or "missing") if result else "missing", "next": (nxt.group(1).strip() or "missing") if nxt else "missing"})
     top_issues = validation.get("issues", [])[:8]
-    next_mutation = "Fill missing brief fields and replace template iteration logs with real predicate checks."
+    next_mutation = "No validation blockers — review the artifact quality and decide whether to hand off, run another loop, or archive evidence."
     if top_issues:
         first = top_issues[0]
         next_mutation = f"Fix {first['type']} in {first['path']}: {first['message']}"
-    return _json({"success": True, "path": str(run_path), "track": meta.get("track"), "depth": meta.get("depth"), "passable": validation.get("passable", False), "issue_counts": validation.get("issue_counts", {}), "loop_trace": loop_lines, "top_blockers": top_issues, "next_mutation": next_mutation})
+    return _json({"success": True, "path": str(run_path), "track": meta.get("track"), "depth": meta.get("depth"), "passable": validation.get("passable", False), "issue_counts": validation.get("issue_counts", {}), "warning_count": len(validation.get("warnings", [])), "warnings": validation.get("warnings", [])[:5], "loop_trace": loop_lines, "top_blockers": top_issues, "next_mutation": next_mutation})
 
 
 def parse_kv_args(raw: str) -> dict[str, Any]:
@@ -495,6 +589,7 @@ def selector_text() -> str:
 - `/loop-creator full slug=agent-workflow artifact=... outcome=...`
 - `/loop-creator gs depth=Quick slug=gtm-plan company=... customer=... payer=... buying_trigger=... outcome=...`
 
+생성된 run은 `state/goal-contract.md`와 `logs/iteration-*.md`의 Learning Trace를 채워야 passable이 돼.
 이제 공식 이름은 `/loop-creator`야.
 """.strip()
 
@@ -516,9 +611,11 @@ def handle_loop_validate(raw_args: str) -> str:
         return "사용법: `/loop-validate <run-path>`"
     data = json.loads(validate_run({"path": path}))
     v = data["validation"]
-    lines = ["## loop-validate 결과", f"- path: `{data['path']}`", f"- track: `{v.get('track')}` / depth: `{v.get('depth') or 'n/a'}`", f"- scaffold_ok: `{v.get('ok')}` / passable: `{v.get('passable')}`", f"- logs: `{v.get('log_count')}/{v.get('min_logs')}`", f"- issue_counts: `{v.get('issue_counts', {})}`"]
+    lines = ["## loop-validate 결과", f"- path: `{data['path']}`", f"- track: `{v.get('track')}` / depth: `{v.get('depth') or 'n/a'}`", f"- scaffold_ok: `{v.get('ok')}` / passable: `{v.get('passable')}`", f"- logs: `{v.get('log_count')}/{v.get('min_logs')}`", f"- issue_counts: `{v.get('issue_counts', {})}`", f"- warnings: `{len(v.get('warnings', []))}`"]
     for issue in v.get("issues", [])[:8]:
         lines.append(f"- {issue['type']} @ `{issue['path']}`: {issue['message']}")
+    for warning in v.get("warnings", [])[:5]:
+        lines.append(f"- warning @ `{warning['path']}`: {warning['message']}")
     lines.append("👉 다음 액션: 첫 blocker부터 고쳐." if v.get("issues") else "👉 다음 액션: 없음 — passable 상태야.")
     return "\n".join(lines)
 
@@ -528,7 +625,7 @@ def handle_loop_summary(raw_args: str) -> str:
     if not path:
         return "사용법: `/loop-summary <run-path>`"
     data = json.loads(summarize_run({"path": path}))
-    lines = ["## loop-summary", f"- path: `{data['path']}`", f"- track: `{data.get('track')}` / depth: `{data.get('depth') or 'n/a'}`", f"- passable: `{data.get('passable')}`", f"- issue_counts: `{data.get('issue_counts')}`"]
+    lines = ["## loop-summary", f"- path: `{data['path']}`", f"- track: `{data.get('track')}` / depth: `{data.get('depth') or 'n/a'}`", f"- passable: `{data.get('passable')}`", f"- issue_counts: `{data.get('issue_counts')}`", f"- warnings: `{data.get('warning_count', 0)}`"]
     for item in data.get("loop_trace", [])[:5]:
         lines.append(f"- {item['file']}: {item['goal']} → {item['result']} → {item['next']}")
     lines.append(f"👉 다음 액션: {data.get('next_mutation')}")
