@@ -227,6 +227,8 @@ def _fill_restartability_artifacts(run: pathlib.Path) -> None:
                     }
                 ],
                 "coverage_relation": "generic",
+                "latest_artifact_hash": "sample-draft-v1-local-fixture",
+                "latest_verified_at": "2026-06-16T00:00:00+09:00",
                 "completion_claims": ["candidate_complete after smoke validator returned passable true"],
                 "failures": [],
                 "stop_gate": {
@@ -240,6 +242,46 @@ def _fill_restartability_artifacts(run: pathlib.Path) -> None:
             indent=2,
         )
         + "\n",
+        encoding="utf-8",
+    )
+
+    (run / "state" / "approval-gate.md").write_text(
+        """# Approval Gate
+
+Purpose: separate planning/refinement/execution consent so the run does not silently mutate scope.
+
+## Gate State
+- current_stage: `final_handoff`
+- track: `standard`
+- risk_mode: `normal`
+- execution_approval_required: true
+- latest_approval_status: `approved`
+
+## Stage Gates
+| Stage | Required artifact | Approval required before next stage | Status | Evidence |
+|---|---|---:|---|---|
+| Spec / brief crystallized | `state/brief.md` | true | approved | local smoke fixture accepted |
+| Harness accepted | `final/harness.md` | true | approved | validator scaffold readback |
+| Execution / rewrite started | `logs/iteration-*.md` | true for non-trivial side effects | approved | five logs written |
+| Final handoff | `final/user-facing-summary.md` | false | approved | final validation passable |
+
+## Rules
+- Do not treat scaffold creation as execution approval.
+- Do not auto-promote from plan/refinement to execution when a human approval gate is pending.
+- If the user approved in chat, record the quote or message handle in `state/steering-ledger.jsonl`.
+""",
+        encoding="utf-8",
+    )
+    (run / "state" / "story-ledger.jsonl").write_text(
+        json.dumps({"schema":"loop-creator-story-ledger-v1","event":"story_created","story_id":"G001","title":"Complete first predicate loop","objective":"Turn the scaffolded run into one verified predicate loop.","status":"complete","evidence":["python3 scripts/smoke_passable.py final_validation passable true"],"blocker":"","next_story":"none; smoke run complete","created_at":"2026-06-16T00:00:00+09:00"}, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
+    (run / "state" / "steering-ledger.jsonl").write_text(
+        json.dumps({"schema":"loop-creator-steering-ledger-v1","event":"approval_recorded","kind":"annotate_ledger","rationale":"Local smoke fixture records explicit approval gate for completion path.","evidence":"approval-gate.md latest_approval_status approved","created_at":"2026-06-16T00:00:00+09:00"}, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
+    (run / "state" / "review-receipts.jsonl").write_text(
+        json.dumps({"schema":"loop-creator-review-receipts-v1","review_id":"review-001","role":"critic","artifact_path":"final/review-report.md","artifact_sha256":"sample-draft-v1-local-fixture","verdict":"CLEAR","summary":"Review report summarizes five iteration traces and validator evidence.","created_at":"2026-06-16T00:00:00+09:00"}, ensure_ascii=False) + "\n",
         encoding="utf-8",
     )
 

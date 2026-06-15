@@ -607,6 +607,8 @@ def _evidence_ledger_template(track: str, grade: str, risk_mode: str) -> str:
         "verification_commands": [],
         "verification_results": [],
         "coverage_relation": "none",
+        "latest_artifact_hash": "",
+        "latest_verified_at": "",
         "completion_claims": [],
         "failures": [],
         "stop_gate": {
@@ -617,6 +619,76 @@ def _evidence_ledger_template(track: str, grade: str, risk_mode: str) -> str:
         "notes": "Record observed commands/results only. Do not use planned/would-pass verification as evidence.",
     }
     return json.dumps(data, ensure_ascii=False, indent=2) + "\n"
+
+
+def _approval_gate_template(track: str, risk_mode: str) -> str:
+    return f"""# Approval Gate
+
+Purpose: separate planning/refinement/execution consent so the run does not silently mutate scope.
+
+## Gate State
+- current_stage: `scaffolded`
+- track: `{track}`
+- risk_mode: `{risk_mode}`
+- execution_approval_required: true
+- latest_approval_status: `pending`
+
+## Stage Gates
+| Stage | Required artifact | Approval required before next stage | Status | Evidence |
+|---|---|---:|---|---|
+| Spec / brief crystallized | `state/brief.md` | true | TODO | TODO |
+| Harness accepted | `final/harness.md` or `final/gs-harness.md` | true | TODO | TODO |
+| Execution / rewrite started | `logs/iteration-*.md` | true for non-trivial side effects | TODO | TODO |
+| Final handoff | `final/user-facing-summary.md` | false | TODO | TODO |
+
+## Rules
+- Do not treat scaffold creation as execution approval.
+- Do not auto-promote from plan/refinement to execution when a human approval gate is pending.
+- If the user approved in chat, record the quote or message handle in `state/steering-ledger.jsonl`.
+"""
+
+
+def _story_ledger_template() -> str:
+    row = {
+        "schema": "loop-creator-story-ledger-v1",
+        "event": "story_created",
+        "story_id": "G001",
+        "title": "Complete first predicate loop",
+        "objective": "Turn the scaffolded run into at least one verified predicate loop.",
+        "status": "active",
+        "evidence": [],
+        "blocker": "",
+        "next_story": "G002 only after G001 has observed verification evidence.",
+        "created_at": _now().isoformat(timespec="seconds"),
+    }
+    return json.dumps(row, ensure_ascii=False) + "\n"
+
+
+def _steering_ledger_template() -> str:
+    row = {
+        "schema": "loop-creator-steering-ledger-v1",
+        "event": "run_scaffolded",
+        "kind": "annotate_ledger",
+        "rationale": "Initial scaffold created; no steering changes accepted yet.",
+        "evidence": "loop-creator scaffold output",
+        "allowed_kinds": ["split_story", "reorder_pending", "revise_wording", "mark_blocked", "mark_superseded", "annotate_ledger"],
+        "created_at": _now().isoformat(timespec="seconds"),
+    }
+    return json.dumps(row, ensure_ascii=False) + "\n"
+
+
+def _review_receipts_template() -> str:
+    row = {
+        "schema": "loop-creator-review-receipts-v1",
+        "review_id": "review-001",
+        "role": "critic|architect|planner|human",
+        "artifact_path": "TODO",
+        "artifact_sha256": "TODO",
+        "verdict": "TODO: CLEAR|WATCH|BLOCK",
+        "summary": "TODO: one-line receipt; keep detailed review in its own file.",
+        "created_at": _now().isoformat(timespec="seconds"),
+    }
+    return json.dumps(row, ensure_ascii=False) + "\n"
 
 def _summary_template(run_path: Path) -> str:
     return f"""# User-facing Summary
@@ -648,6 +720,10 @@ def create_scaffold(args: dict[str, Any], **kwargs: Any) -> str:
     _write(run_path / "state" / "goal-contract.md", _goal_contract_template(track, depth, args, run_path.name, trigger_mode))
     _write(run_path / "state" / "predicate-list.json", _predicate_list_template(track, depth))
     _write(run_path / "state" / "evidence-ledger.json", _evidence_ledger_template(track, grade, risk_mode))
+    _write(run_path / "state" / "approval-gate.md", _approval_gate_template(track, risk_mode))
+    _write(run_path / "state" / "story-ledger.jsonl", _story_ledger_template())
+    _write(run_path / "state" / "steering-ledger.jsonl", _steering_ledger_template())
+    _write(run_path / "state" / "review-receipts.jsonl", _review_receipts_template())
     _write(run_path / "state" / "session-handoff.md", _session_handoff_template())
     _write(run_path / "state" / "init-check.md", _init_check_template(track, trigger_mode))
     _write(run_path / "state" / "current.md", "# Current Artifact\n\nTODO: paste or link the current artifact/draft here.\n")
@@ -793,6 +869,11 @@ def _validate_evidence_ledger(run_path: Path, *, risk_mode: str) -> tuple[list[d
     candidate_complete = bool(stop_gate.get("candidate_complete_claimed")) or any(str(c).strip() for c in completion_claims)
     if candidate_complete and not successful:
         issues.append({"type": "stop_gate_gap", "path": rel, "message": "candidate completion claimed without observed successful verification"})
+    if candidate_complete:
+        if not str(data.get("latest_artifact_hash") or "").strip():
+            issues.append({"type": "fresh_snapshot_gap", "path": rel, "message": "completion claim requires latest_artifact_hash"})
+        if not str(data.get("latest_verified_at") or "").strip():
+            issues.append({"type": "fresh_snapshot_gap", "path": rel, "message": "completion claim requires latest_verified_at"})
     if risk_mode in {"normal", "deep"} and not successful:
         issues.append({"type": "evidence_ledger_gap", "path": rel, "message": f"{risk_mode} risk mode requires observed successful verification"})
     if risk_mode == "deep" and coverage not in {"direct", "generic"}:
@@ -801,6 +882,102 @@ def _validate_evidence_ledger(run_path: Path, *, risk_mode: str) -> tuple[list[d
         warnings.append({"type": "quality_warning", "path": rel, "message": "normal risk mode has no coverage relation recorded"})
     if successful and not commands:
         warnings.append({"type": "quality_warning", "path": rel, "message": "successful verification exists but verification_commands is empty"})
+    return issues, warnings
+
+
+
+def _completion_claimed(run_path: Path) -> bool:
+    try:
+        data = json.loads((run_path / "state" / "evidence-ledger.json").read_text(encoding="utf-8"))
+    except Exception:
+        return False
+    stop_gate = data.get("stop_gate") if isinstance(data, dict) and isinstance(data.get("stop_gate"), dict) else {}
+    claims = data.get("completion_claims") if isinstance(data, dict) else []
+    return bool(stop_gate.get("candidate_complete_claimed")) or any(str(c).strip() for c in (claims or []) if isinstance(claims, list))
+
+def _read_jsonl(path: Path) -> tuple[list[dict[str, Any]], str | None]:
+    rows: list[dict[str, Any]] = []
+    try:
+        text = path.read_text(encoding="utf-8")
+    except Exception as exc:
+        return rows, f"read error: {type(exc).__name__}"
+    for idx, raw in enumerate(text.splitlines(), 1):
+        if not raw.strip():
+            continue
+        try:
+            obj = json.loads(raw)
+        except Exception as exc:
+            return rows, f"line {idx} invalid JSON: {type(exc).__name__}"
+        if not isinstance(obj, dict):
+            return rows, f"line {idx} must be an object"
+        rows.append(obj)
+    return rows, None
+
+
+def _validate_goal_story_artifacts(run_path: Path, *, completion_claimed: bool) -> tuple[list[dict[str, str]], list[dict[str, str]]]:
+    issues: list[dict[str, str]] = []
+    warnings: list[dict[str, str]] = []
+    approval_rel = "state/approval-gate.md"
+    approval = _read(run_path / approval_rel)
+    issues.extend(_require_markers(approval, rel=approval_rel, issue_type="approval_gate_gap", markers=["## Gate State", "## Stage Gates", "execution_approval_required", "latest_approval_status"]))
+    if "TODO" in approval:
+        issues.append({"type": "approval_gate_gap", "path": approval_rel, "message": "approval gate still contains TODO"})
+    if "latest_approval_status: `approved`" not in approval and completion_claimed:
+        issues.append({"type": "approval_gate_gap", "path": approval_rel, "message": "completion claimed while latest approval is not recorded as approved"})
+
+    story_rel = "state/story-ledger.jsonl"
+    story_rows, err = _read_jsonl(run_path / story_rel)
+    if err:
+        issues.append({"type": "story_ledger_gap", "path": story_rel, "message": err})
+    elif not story_rows:
+        issues.append({"type": "story_ledger_gap", "path": story_rel, "message": "story ledger has no events"})
+    else:
+        valid_statuses = {"pending", "active", "complete", "blocked", "failed", "superseded"}
+        for idx, row in enumerate(story_rows, 1):
+            for field in ["story_id", "status", "evidence"]:
+                if field not in row:
+                    issues.append({"type": "story_ledger_gap", "path": story_rel, "message": f"line {idx} missing {field}"})
+            status = row.get("status")
+            if status not in valid_statuses:
+                issues.append({"type": "story_ledger_gap", "path": story_rel, "message": f"line {idx} invalid status: {status}"})
+            evidence = row.get("evidence")
+            if status == "complete" and not evidence:
+                issues.append({"type": "story_ledger_gap", "path": story_rel, "message": f"line {idx} complete story requires evidence"})
+            if status == "blocked" and not str(row.get("blocker") or "").strip():
+                issues.append({"type": "story_ledger_gap", "path": story_rel, "message": f"line {idx} blocked story requires blocker"})
+        if completion_claimed and not any(r.get("status") == "complete" and r.get("evidence") for r in story_rows):
+            issues.append({"type": "story_ledger_gap", "path": story_rel, "message": "completion claimed without a complete story event with evidence"})
+
+    steering_rel = "state/steering-ledger.jsonl"
+    steering_rows, err = _read_jsonl(run_path / steering_rel)
+    if err:
+        issues.append({"type": "steering_ledger_gap", "path": steering_rel, "message": err})
+    elif not steering_rows:
+        issues.append({"type": "steering_ledger_gap", "path": steering_rel, "message": "steering ledger has no events"})
+    else:
+        valid_kinds = {"split_story", "reorder_pending", "revise_wording", "mark_blocked", "mark_superseded", "annotate_ledger"}
+        for idx, row in enumerate(steering_rows, 1):
+            kind = row.get("kind")
+            if kind not in valid_kinds:
+                issues.append({"type": "steering_ledger_gap", "path": steering_rel, "message": f"line {idx} invalid kind: {kind}"})
+            if not str(row.get("rationale") or "").strip():
+                warnings.append({"type": "quality_warning", "path": steering_rel, "message": f"line {idx} has no rationale"})
+
+    receipts_rel = "state/review-receipts.jsonl"
+    receipt_rows, err = _read_jsonl(run_path / receipts_rel)
+    if err:
+        issues.append({"type": "review_receipt_gap", "path": receipts_rel, "message": err})
+    elif not receipt_rows:
+        issues.append({"type": "review_receipt_gap", "path": receipts_rel, "message": "review receipts ledger has no rows"})
+    else:
+        for idx, row in enumerate(receipt_rows, 1):
+            verdict = row.get("verdict")
+            if verdict not in {"CLEAR", "WATCH", "BLOCK"}:
+                issues.append({"type": "review_receipt_gap", "path": receipts_rel, "message": f"line {idx} invalid verdict: {verdict}"})
+            for field in ["artifact_path", "artifact_sha256"]:
+                value = str(row.get(field) or "")
+                if not value or "TODO" in value:
+                    issues.append({"type": "review_receipt_gap", "path": receipts_rel, "message": f"line {idx} missing {field}"})
     return issues, warnings
 
 def _validate_predicate_list(run_path: Path) -> tuple[list[dict[str, str]], list[dict[str, str]]]:
@@ -887,7 +1064,7 @@ def _validate_path(run_path: Path) -> dict[str, Any]:
     depth = _normalize_depth(meta.get("depth"), track)
     grade = _normalize_grade(meta.get("grade"), track, depth)
     risk_mode = _normalize_risk_mode(meta.get("risk_mode"), track, grade)
-    required = ["state/brief.md", "state/goal-contract.md", "state/predicate-list.json", "state/evidence-ledger.json", "state/session-handoff.md", "state/init-check.md", "state/current.md", "state/research-notes.md", "final/improved-draft.md", "final/review-report.md", "final/quick-loop-card.md", "final/clean-state-checklist.md", "final/quality-document.md", "final/user-facing-summary.md", "final/gs-harness.md" if track == "gs" else "final/harness.md"]
+    required = ["state/brief.md", "state/goal-contract.md", "state/predicate-list.json", "state/evidence-ledger.json", "state/approval-gate.md", "state/story-ledger.jsonl", "state/steering-ledger.jsonl", "state/review-receipts.jsonl", "state/session-handoff.md", "state/init-check.md", "state/current.md", "state/research-notes.md", "final/improved-draft.md", "final/review-report.md", "final/quick-loop-card.md", "final/clean-state-checklist.md", "final/quality-document.md", "final/user-facing-summary.md", "final/gs-harness.md" if track == "gs" else "final/harness.md"]
     if track == "full" or depth == "Full GS":
         required.append("final/loop-spec.md")
     if track == "gs":
@@ -901,6 +1078,9 @@ def _validate_path(run_path: Path) -> dict[str, Any]:
     evidence_issues, evidence_warnings = _validate_evidence_ledger(run_path, risk_mode=risk_mode)
     issues.extend(evidence_issues)
     warnings.extend(evidence_warnings)
+    story_issues, story_warnings = _validate_goal_story_artifacts(run_path, completion_claimed=_completion_claimed(run_path))
+    issues.extend(story_issues)
+    warnings.extend(story_warnings)
     restart_issues, restart_warnings = _validate_restartability_artifacts(run_path)
     issues.extend(restart_issues)
     warnings.extend(restart_warnings)

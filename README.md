@@ -72,6 +72,10 @@ state/
   goal-contract.md
   predicate-list.json
   evidence-ledger.json
+  approval-gate.md
+  story-ledger.jsonl
+  steering-ledger.jsonl
+  review-receipts.jsonl
   session-handoff.md
   init-check.md
   current.md
@@ -155,12 +159,29 @@ Spec Contract Addendum 필드:
 
 - `state/predicate-list.json`: predicate별 `behavior`, `verification`, `status`, `evidence`, `next_action`을 갖는 state machine. `passing`은 evidence 없이는 허용하지 않는다.
 - `state/evidence-ledger.json`: fable-ish에서 가져온 observed verification ledger. 변경 파일, 검증 명령, 성공/실패, `coverage_relation`, completion claim, stop-gate 상태를 기록한다.
+- `state/approval-gate.md`: Gajae-Code의 approval-gated pipeline에서 가져온 stage gate. spec/refinement/execution 전환마다 승인 상태를 명시한다.
+- `state/story-ledger.jsonl`: Ultragoal 스타일 story ledger. G001/G002 단위 목표, 상태, evidence, blocker, next story를 append-only로 남긴다.
+- `state/steering-ledger.jsonl`: split/reorder/revise/block/supersede 같은 중간 변경을 audit event로 남긴다.
+- `state/review-receipts.jsonl`: Planner/Architect/Critic/Human review의 본문 대신 artifact path, sha256, verdict, summary receipt를 남긴다.
 - `state/session-handoff.md`: 다음 세션이 바로 이어받도록 `Verified Now`, `Changed This Session`, `Broken Or Unverified`, `Next Best Step`, `Commands`를 남긴다.
 - `state/init-check.md`: 작업 전 startup/readback/verification path가 살아 있는지 확인한다.
 - `final/clean-state-checklist.md`: 종료 시 unchecked item, TODO, 임시/debug residue, stale state가 남지 않았는지 확인한다.
 - `final/quality-document.md`: Goal Contract, Predicate State, Iteration Evidence, Final Artifact, Handoff Cleanliness를 domain별로 등급화한다.
 
 이 레이어의 목적은 “좋은 루프가 한 번 돌았다”가 아니라 **새 세션/다른 agent가 같은 run folder만 보고 이어갈 수 있음**을 증명하는 것이다.
+
+## Approval / Story Ledger
+
+`gajae-code`에서 가져온 핵심은 runner 자체가 아니라 **승인-게이트와 목표 변경 auditability**다.
+
+- scaffold 생성은 실행 승인으로 간주하지 않는다.
+- execution/rewrite로 넘어가기 전 `state/approval-gate.md`에 승인 상태를 남긴다.
+- G001/G002 같은 story 단위 목표는 `state/story-ledger.jsonl`에 append-only로 남긴다.
+- 목표를 쪼개거나 순서를 바꾸거나 막힌 목표를 supersede하면 `state/steering-ledger.jsonl`에 남긴다.
+- reviewer의 긴 본문을 복붙하지 않고 `state/review-receipts.jsonl`에 path/hash/verdict receipt를 남긴다.
+- completion claim이 있으면 `evidence-ledger`의 `latest_artifact_hash`와 `latest_verified_at`이 있어야 한다.
+
+한 줄 원칙: **목표가 바뀌면 기록하고, 완료 전에는 fresh snapshot을 남긴다.**
 
 ## Runtime Evidence Ledger
 
@@ -208,6 +229,11 @@ Spec Contract Addendum 필드:
 - `final/quick-loop-card.md`의 kickoff schema, anti-gaming, install/hook boundary, lightweight learning trace 존재 여부
 - `state/predicate-list.json`의 state machine: status enum, single active predicate, passing evidence, blocked next action
 - `state/evidence-ledger.json`의 observed verification: successful result, coverage relation, completion claim stop gate, failed-as-success 차단
+- `state/approval-gate.md`의 승인 상태와 completion claim 전 approval gate
+- `state/story-ledger.jsonl`의 story status/evidence/blocker
+- `state/steering-ledger.jsonl`의 steering event kind/rationale
+- `state/review-receipts.jsonl`의 reviewer verdict/path/hash receipt
+- completion claim 전 fresh snapshot: `latest_artifact_hash`, `latest_verified_at`
 - `state/session-handoff.md`, `state/init-check.md`, `final/clean-state-checklist.md`, `final/quality-document.md`의 재시작/clean handoff marker와 TODO residue
 - track별 최소 iteration log 수
 - iteration log의 필수 section/field 존재 여부
