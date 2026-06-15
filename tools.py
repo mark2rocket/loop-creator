@@ -28,6 +28,8 @@ except Exception:  # pragma: no cover
 
 TRACK_LABELS = {"standard": "standard loop", "full": "full loop", "gs": "gs loop"}
 TRIGGER_MODES = {"manual": "manual", "interval": "interval", "event": "event"}
+RISK_MODES = {"quick", "normal", "deep", "blocked"}
+COVERAGE_RELATIONS = {"direct", "generic", "uncertain", "none"}
 GS_DEPTHS = {"quick": "Quick", "standard": "standard", "full": "Full GS", "full gs": "Full GS", "full-gs": "Full GS", "full_gs": "Full GS"}
 GRADES = {"light": "LIGHT", "standard": "STANDARD", "heavy": "HEAVY", "l": "LIGHT", "s": "STANDARD", "h": "HEAVY"}
 SKILL_ROOT = Path(get_hermes_home()) / "skills" / "strategy" / "loop-harness-creator"
@@ -87,6 +89,23 @@ def _normalize_trigger_mode(value: str | None) -> str:
     return aliases.get(raw, "manual")
 
 
+
+def _normalize_risk_mode(value: str | None, track: str, grade: str) -> str:
+    raw = (value or "").strip().lower().replace("_", "-")
+    aliases = {
+        "quick": "quick", "q": "quick", "light": "quick",
+        "normal": "normal", "standard": "normal", "n": "normal",
+        "deep": "deep", "heavy": "deep", "d": "deep",
+        "blocked": "blocked", "block": "blocked", "b": "blocked",
+    }
+    if raw in aliases:
+        return aliases[raw]
+    if grade == "HEAVY" or track in {"full", "gs"}:
+        return "deep"
+    if grade == "LIGHT":
+        return "quick"
+    return "normal"
+
 def _default_grade(track: str, depth: str = "") -> str:
     if track == "full" or depth == "Full GS":
         return "HEAVY"
@@ -117,7 +136,7 @@ def _source_status() -> dict[str, Any]:
 def _brief_template(track: str, depth: str, args: dict[str, Any], run_id: str) -> str:
     grade = _normalize_grade(args.get("grade"), track, depth)
     lines = [
-        "# Loop Run Brief", "", f"- run_id: `{run_id}`", f"- track: `{track}` / {TRACK_LABELS[track]}", f"- trigger_mode: `{_normalize_trigger_mode(args.get('trigger_mode'))}`", f"- gs_depth: `{depth or 'n/a'}`", f"- grade: `{grade}`", f"- created_at: {_now().isoformat(timespec='seconds')}", f"- source_skill: `{SKILL_ROOT}`", "",
+        "# Loop Run Brief", "", f"- run_id: `{run_id}`", f"- track: `{track}` / {TRACK_LABELS[track]}", f"- trigger_mode: `{_normalize_trigger_mode(args.get('trigger_mode'))}`", f"- risk_mode: `{_normalize_risk_mode(args.get('risk_mode'), track, grade)}`", f"- gs_depth: `{depth or 'n/a'}`", f"- grade: `{grade}`", f"- created_at: {_now().isoformat(timespec='seconds')}", f"- source_skill: `{SKILL_ROOT}`", "",
         "## Minimum Brief", f"- Artifact / draft: {args.get('artifact') or 'TODO: paste path or draft text'}", f"- Reader / evaluator: {args.get('reader') or 'TODO'}", f"- Desired outcome: {args.get('outcome') or 'TODO'}", f"- Constraints / evidence permission: {args.get('constraints') or 'TODO'}", "", "## Track Selection Rationale",
     ]
     if track == "standard":
@@ -572,6 +591,33 @@ Quality snapshot for the generated loop run. Update after material iteration bat
 - Gaps closed:
 """
 
+
+def _evidence_ledger_template(track: str, grade: str, risk_mode: str) -> str:
+    data = {
+        "schema": "loop-creator-evidence-ledger-v1",
+        "risk_mode": risk_mode,
+        "verification_depth": risk_mode,
+        "rules": {
+            "observed_verification_required": risk_mode in {"normal", "deep"},
+            "direct_or_generic_coverage_required": risk_mode == "deep",
+            "completion_claim_requires_successful_verification": True,
+            "do_not_record_failed_verification_as_success": True,
+        },
+        "changed_files": [],
+        "verification_commands": [],
+        "verification_results": [],
+        "coverage_relation": "none",
+        "completion_claims": [],
+        "failures": [],
+        "stop_gate": {
+            "candidate_complete_claimed": False,
+            "successful_verification_observed": False,
+            "blocked_reason": "No observed verification yet.",
+        },
+        "notes": "Record observed commands/results only. Do not use planned/would-pass verification as evidence.",
+    }
+    return json.dumps(data, ensure_ascii=False, indent=2) + "\n"
+
 def _summary_template(run_path: Path) -> str:
     return f"""# User-facing Summary
 
@@ -590,6 +636,7 @@ def create_scaffold(args: dict[str, Any], **kwargs: Any) -> str:
     depth = _normalize_depth(args.get("depth"), track)
     grade = _normalize_grade(args.get("grade"), track, depth)
     trigger_mode = _normalize_trigger_mode(args.get("trigger_mode"))
+    risk_mode = _normalize_risk_mode(args.get("risk_mode"), track, grade)
     now = _now()
     slug = _safe_slug(args.get("slug"), f"{track}-loop")
     run_path = _default_root(args.get("root_path")) / f"{now.strftime('%Y-%m-%d')}_{slug}"
@@ -600,6 +647,7 @@ def create_scaffold(args: dict[str, Any], **kwargs: Any) -> str:
     _write(run_path / "state" / "brief.md", _brief_template(track, depth, args, run_path.name))
     _write(run_path / "state" / "goal-contract.md", _goal_contract_template(track, depth, args, run_path.name, trigger_mode))
     _write(run_path / "state" / "predicate-list.json", _predicate_list_template(track, depth))
+    _write(run_path / "state" / "evidence-ledger.json", _evidence_ledger_template(track, grade, risk_mode))
     _write(run_path / "state" / "session-handoff.md", _session_handoff_template())
     _write(run_path / "state" / "init-check.md", _init_check_template(track, trigger_mode))
     _write(run_path / "state" / "current.md", "# Current Artifact\n\nTODO: paste or link the current artifact/draft here.\n")
@@ -620,8 +668,8 @@ def create_scaffold(args: dict[str, Any], **kwargs: Any) -> str:
     _write(run_path / "final" / "quality-document.md", _quality_document_template(track, depth))
     _write(run_path / "final" / "user-facing-summary.md", _summary_template(run_path))
     _write(run_path / "logs" / "iteration-001.md", _iteration_template(1))
-    _write(run_path / "loop-creator.json", _json({"track": track, "label": TRACK_LABELS[track], "trigger_mode": trigger_mode, "depth": depth, "grade": grade, "created_at": now.isoformat(timespec="seconds"), "source_skill": str(SKILL_ROOT), "gs_source": _source_status() if (track == "gs" and depth == "Full GS") else None}))
-    return _json({"success": True, "path": str(run_path), "track": track, "label": TRACK_LABELS[track], "trigger_mode": trigger_mode, "depth": depth, "grade": grade, "validation": _validate_path(run_path), "next_action": "Fill state/brief.md and complete logs/iteration-001.md with a real predicate check."})
+    _write(run_path / "loop-creator.json", _json({"track": track, "label": TRACK_LABELS[track], "trigger_mode": trigger_mode, "risk_mode": risk_mode, "depth": depth, "grade": grade, "created_at": now.isoformat(timespec="seconds"), "source_skill": str(SKILL_ROOT), "gs_source": _source_status() if (track == "gs" and depth == "Full GS") else None}))
+    return _json({"success": True, "path": str(run_path), "track": track, "label": TRACK_LABELS[track], "trigger_mode": trigger_mode, "risk_mode": risk_mode, "depth": depth, "grade": grade, "validation": _validate_path(run_path), "next_action": "Fill state/brief.md, state/evidence-ledger.json, and logs/iteration-001.md with real predicate evidence."})
 
 
 def _read(path: Path) -> str:
@@ -645,7 +693,9 @@ def _meta(run_path: Path) -> dict[str, Any]:
     grade_match = re.search(r"grade:\s*`([^`]+)`", brief)
     trigger_match = re.search(r"trigger_mode:\s*`([^`]+)`", brief)
     depth = "" if not depth_match else depth_match.group(1)
-    return {"track": track, "trigger_mode": _normalize_trigger_mode(trigger_match.group(1) if trigger_match else None), "depth": depth, "grade": _normalize_grade(grade_match.group(1) if grade_match else None, track, depth)}
+    grade = _normalize_grade(grade_match.group(1) if grade_match else None, track, depth)
+    risk_match = re.search(r"risk_mode:\s*`([^`]+)`", brief)
+    return {"track": track, "trigger_mode": _normalize_trigger_mode(trigger_match.group(1) if trigger_match else None), "risk_mode": _normalize_risk_mode(risk_match.group(1) if risk_match else None, track, grade), "depth": depth, "grade": grade}
 
 
 def _field_value(text: str, label: str) -> str:
@@ -705,6 +755,53 @@ def _check_trace(log_path: Path) -> list[str]:
     return issues
 
 
+
+
+def _validate_evidence_ledger(run_path: Path, *, risk_mode: str) -> tuple[list[dict[str, str]], list[dict[str, str]]]:
+    issues: list[dict[str, str]] = []
+    warnings: list[dict[str, str]] = []
+    rel = "state/evidence-ledger.json"
+    path = run_path / rel
+    if not path.exists():
+        return ([{"type": "evidence_ledger_gap", "path": rel, "message": "evidence ledger missing"}], warnings)
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        return ([{"type": "evidence_ledger_gap", "path": rel, "message": f"invalid JSON: {type(exc).__name__}"}], warnings)
+    coverage = data.get("coverage_relation", "none")
+    if coverage not in COVERAGE_RELATIONS:
+        issues.append({"type": "evidence_ledger_gap", "path": rel, "message": f"invalid coverage_relation: {coverage}"})
+    results = data.get("verification_results")
+    if not isinstance(results, list):
+        issues.append({"type": "evidence_ledger_gap", "path": rel, "message": "verification_results must be a list"})
+        results = []
+    commands = data.get("verification_commands")
+    if not isinstance(commands, list):
+        issues.append({"type": "evidence_ledger_gap", "path": rel, "message": "verification_commands must be a list"})
+        commands = []
+    successful = any(isinstance(r, dict) and r.get("success") is True for r in results)
+    failed_marked_success = [r for r in results if isinstance(r, dict) and r.get("success") is True and re.search(r"(?i)(failed|failure|error|traceback|exit code [1-9])", str(r.get("summary") or ""))]
+    if failed_marked_success:
+        issues.append({"type": "evidence_ledger_gap", "path": rel, "message": "failed verification appears recorded as success"})
+    completion_claims = data.get("completion_claims")
+    if completion_claims is None:
+        completion_claims = []
+    if not isinstance(completion_claims, list):
+        issues.append({"type": "evidence_ledger_gap", "path": rel, "message": "completion_claims must be a list"})
+        completion_claims = []
+    stop_gate = data.get("stop_gate") if isinstance(data.get("stop_gate"), dict) else {}
+    candidate_complete = bool(stop_gate.get("candidate_complete_claimed")) or any(str(c).strip() for c in completion_claims)
+    if candidate_complete and not successful:
+        issues.append({"type": "stop_gate_gap", "path": rel, "message": "candidate completion claimed without observed successful verification"})
+    if risk_mode in {"normal", "deep"} and not successful:
+        issues.append({"type": "evidence_ledger_gap", "path": rel, "message": f"{risk_mode} risk mode requires observed successful verification"})
+    if risk_mode == "deep" and coverage not in {"direct", "generic"}:
+        issues.append({"type": "coverage_gap", "path": rel, "message": "deep risk mode requires direct or generic verification coverage"})
+    if risk_mode == "normal" and coverage == "none":
+        warnings.append({"type": "quality_warning", "path": rel, "message": "normal risk mode has no coverage relation recorded"})
+    if successful and not commands:
+        warnings.append({"type": "quality_warning", "path": rel, "message": "successful verification exists but verification_commands is empty"})
+    return issues, warnings
 
 def _validate_predicate_list(run_path: Path) -> tuple[list[dict[str, str]], list[dict[str, str]]]:
     issues: list[dict[str, str]] = []
@@ -789,7 +886,8 @@ def _validate_path(run_path: Path) -> dict[str, Any]:
     track = _normalize_track(meta.get("track")) or "standard"
     depth = _normalize_depth(meta.get("depth"), track)
     grade = _normalize_grade(meta.get("grade"), track, depth)
-    required = ["state/brief.md", "state/goal-contract.md", "state/predicate-list.json", "state/session-handoff.md", "state/init-check.md", "state/current.md", "state/research-notes.md", "final/improved-draft.md", "final/review-report.md", "final/quick-loop-card.md", "final/clean-state-checklist.md", "final/quality-document.md", "final/user-facing-summary.md", "final/gs-harness.md" if track == "gs" else "final/harness.md"]
+    risk_mode = _normalize_risk_mode(meta.get("risk_mode"), track, grade)
+    required = ["state/brief.md", "state/goal-contract.md", "state/predicate-list.json", "state/evidence-ledger.json", "state/session-handoff.md", "state/init-check.md", "state/current.md", "state/research-notes.md", "final/improved-draft.md", "final/review-report.md", "final/quick-loop-card.md", "final/clean-state-checklist.md", "final/quality-document.md", "final/user-facing-summary.md", "final/gs-harness.md" if track == "gs" else "final/harness.md"]
     if track == "full" or depth == "Full GS":
         required.append("final/loop-spec.md")
     if track == "gs":
@@ -800,6 +898,9 @@ def _validate_path(run_path: Path) -> dict[str, Any]:
     pred_issues, pred_warnings = _validate_predicate_list(run_path)
     issues.extend(pred_issues)
     warnings.extend(pred_warnings)
+    evidence_issues, evidence_warnings = _validate_evidence_ledger(run_path, risk_mode=risk_mode)
+    issues.extend(evidence_issues)
+    warnings.extend(evidence_warnings)
     restart_issues, restart_warnings = _validate_restartability_artifacts(run_path)
     issues.extend(restart_issues)
     warnings.extend(restart_warnings)
@@ -881,7 +982,7 @@ def _validate_path(run_path: Path) -> dict[str, Any]:
     by_type: dict[str, int] = {}
     for issue in issues:
         by_type[issue["type"]] = by_type.get(issue["type"], 0) + 1
-    return {"ok": not any(i["type"] == "scaffold_gap" for i in issues), "passable": len(issues) == 0, "track": track, "trigger_mode": _normalize_trigger_mode(meta.get("trigger_mode")), "depth": depth, "grade": grade, "min_logs": min_logs, "log_count": len(logs), "issues": issues, "issue_counts": by_type, "warnings": warnings}
+    return {"ok": not any(i["type"] == "scaffold_gap" for i in issues), "passable": len(issues) == 0, "track": track, "trigger_mode": _normalize_trigger_mode(meta.get("trigger_mode")), "risk_mode": risk_mode, "depth": depth, "grade": grade, "min_logs": min_logs, "log_count": len(logs), "issues": issues, "issue_counts": by_type, "warnings": warnings}
 
 
 def validate_run(args: dict[str, Any], **kwargs: Any) -> str:
@@ -912,7 +1013,7 @@ def summarize_run(args: dict[str, Any], **kwargs: Any) -> str:
     if top_issues:
         first = top_issues[0]
         next_mutation = f"Fix {first['type']} in {first['path']}: {first['message']}"
-    return _json({"success": True, "path": str(run_path), "track": meta.get("track"), "trigger_mode": _normalize_trigger_mode(meta.get("trigger_mode")), "depth": meta.get("depth"), "grade": validation.get("grade"), "passable": validation.get("passable", False), "issue_counts": validation.get("issue_counts", {}), "warning_count": len(validation.get("warnings", [])), "warnings": validation.get("warnings", [])[:5], "loop_trace": loop_lines, "top_blockers": top_issues, "next_mutation": next_mutation})
+    return _json({"success": True, "path": str(run_path), "track": meta.get("track"), "trigger_mode": _normalize_trigger_mode(meta.get("trigger_mode")), "risk_mode": validation.get("risk_mode"), "depth": meta.get("depth"), "grade": validation.get("grade"), "passable": validation.get("passable", False), "issue_counts": validation.get("issue_counts", {}), "warning_count": len(validation.get("warnings", [])), "warnings": validation.get("warnings", [])[:5], "loop_trace": loop_lines, "top_blockers": top_issues, "next_mutation": next_mutation})
 
 
 def check_update(args: dict[str, Any], **kwargs: Any) -> str:

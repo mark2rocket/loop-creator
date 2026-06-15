@@ -204,6 +204,45 @@ def _fill_review(run: pathlib.Path) -> None:
 
 
 def _fill_restartability_artifacts(run: pathlib.Path) -> None:
+    (run / "state" / "evidence-ledger.json").write_text(
+        json.dumps(
+            {
+                "schema": "loop-creator-evidence-ledger-v1",
+                "risk_mode": "normal",
+                "verification_depth": "normal",
+                "rules": {
+                    "observed_verification_required": True,
+                    "direct_or_generic_coverage_required": False,
+                    "completion_claim_requires_successful_verification": True,
+                    "do_not_record_failed_verification_as_success": True,
+                },
+                "changed_files": ["state/goal-contract.md", "logs/iteration-001.md", "final/review-report.md"],
+                "verification_commands": ["python3 scripts/smoke_passable.py"],
+                "verification_results": [
+                    {
+                        "command": "python3 scripts/smoke_passable.py",
+                        "success": True,
+                        "coverage_relation": "generic",
+                        "summary": "final_validation passable true with zero issue counts and zero warnings",
+                    }
+                ],
+                "coverage_relation": "generic",
+                "completion_claims": ["candidate_complete after smoke validator returned passable true"],
+                "failures": [],
+                "stop_gate": {
+                    "candidate_complete_claimed": True,
+                    "successful_verification_observed": True,
+                    "blocked_reason": "",
+                },
+                "notes": "Observed local smoke command only; no planned verification is counted as evidence.",
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
     (run / "state" / "predicate-list.json").write_text(
         json.dumps(
             {

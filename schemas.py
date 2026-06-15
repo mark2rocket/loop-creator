@@ -12,6 +12,7 @@ LOOP_CREATOR_SCAFFOLD = {
         "properties": {
             "track": {"type": "string", "enum": ["standard", "full", "gs"]},
             "trigger_mode": {"type": "string", "enum": ["manual", "interval", "event"], "description": "What starts the loop: manual user kickoff, interval/cadence, or event/hook."},
+            "risk_mode": {"type": "string", "enum": ["quick", "normal", "deep", "blocked"], "description": "Risk-proportional verification depth imported from fable-ish: quick, normal, deep, or blocked."},
             "depth": {"type": "string", "description": "GS depth: Quick, standard, or Full GS."},
             "grade": {"type": "string", "enum": ["LIGHT", "STANDARD", "HEAVY", "light", "standard", "heavy"], "description": "Spec gate depth. LIGHT requires acceptance evidence; STANDARD adds non-goals/context/alternatives/risks; HEAVY also blocks on forbidden paths."},
             "slug": {"type": "string"},

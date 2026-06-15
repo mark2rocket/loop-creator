@@ -71,6 +71,7 @@ state/
   brief.md
   goal-contract.md
   predicate-list.json
+  evidence-ledger.json
   session-handoff.md
   init-check.md
   current.md
@@ -153,12 +154,26 @@ Spec Contract Addendum 필드:
 `learn-harness-engineering`에서 가져온 핵심 운영 프리미티브는 교육용 course 구조가 아니라 **재시작 가능한 상태 파일**이다.
 
 - `state/predicate-list.json`: predicate별 `behavior`, `verification`, `status`, `evidence`, `next_action`을 갖는 state machine. `passing`은 evidence 없이는 허용하지 않는다.
+- `state/evidence-ledger.json`: fable-ish에서 가져온 observed verification ledger. 변경 파일, 검증 명령, 성공/실패, `coverage_relation`, completion claim, stop-gate 상태를 기록한다.
 - `state/session-handoff.md`: 다음 세션이 바로 이어받도록 `Verified Now`, `Changed This Session`, `Broken Or Unverified`, `Next Best Step`, `Commands`를 남긴다.
 - `state/init-check.md`: 작업 전 startup/readback/verification path가 살아 있는지 확인한다.
 - `final/clean-state-checklist.md`: 종료 시 unchecked item, TODO, 임시/debug residue, stale state가 남지 않았는지 확인한다.
 - `final/quality-document.md`: Goal Contract, Predicate State, Iteration Evidence, Final Artifact, Handoff Cleanliness를 domain별로 등급화한다.
 
 이 레이어의 목적은 “좋은 루프가 한 번 돌았다”가 아니라 **새 세션/다른 agent가 같은 run folder만 보고 이어갈 수 있음**을 증명하는 것이다.
+
+## Runtime Evidence Ledger
+
+`fable-ish`에서 가져온 핵심은 Claude Code hook 자체가 아니라 **관찰된 검증만 완료 근거로 인정하는 장부 패턴**이다.
+
+- `risk_mode`: `quick`, `normal`, `deep`, `blocked` 중 하나. 기본값은 grade/track에서 추론한다.
+- `coverage_relation`: `direct`, `generic`, `uncertain`, `none` 중 하나.
+- `normal`/`deep` risk mode는 성공한 검증 결과가 있어야 passable이다.
+- `deep` risk mode는 `direct` 또는 `generic` coverage가 필요하다.
+- candidate completion claim이 있는데 성공 검증이 없으면 stop-gate blocker다.
+- 실패/에러 출력을 success로 기록하면 blocker다.
+
+한 줄 원칙: **검증했다고 말한 것보다 ledger에 관찰된 검증을 우선한다.**
 
 ## Learning Trace
 
@@ -192,6 +207,7 @@ Spec Contract Addendum 필드:
 - `kickoff_boundary` 존재 여부
 - `final/quick-loop-card.md`의 kickoff schema, anti-gaming, install/hook boundary, lightweight learning trace 존재 여부
 - `state/predicate-list.json`의 state machine: status enum, single active predicate, passing evidence, blocked next action
+- `state/evidence-ledger.json`의 observed verification: successful result, coverage relation, completion claim stop gate, failed-as-success 차단
 - `state/session-handoff.md`, `state/init-check.md`, `final/clean-state-checklist.md`, `final/quality-document.md`의 재시작/clean handoff marker와 TODO residue
 - track별 최소 iteration log 수
 - iteration log의 필수 section/field 존재 여부
@@ -216,9 +232,9 @@ Validator는 두 단계로 판단한다.
 ## 사용 예시
 
 ```bash
-/loop-creator standard trigger_mode=manual grade=LIGHT slug=proposal artifact="draft.md" reader="buyer" outcome="review-ready proposal" check_command="python3 scripts/verify_run.py" exit_when="verify_run exits 0"
-/loop-creator full trigger_mode=event event=post-merge grade=HEAVY slug=agent-workflow artifact="workflow.md" outcome="reusable loop policy"
-/loop-creator gs trigger_mode=interval cadence=7d depth=Quick grade=STANDARD slug=gtm-plan company="Acme" customer="B2B SaaS marketer" payer="marketing lead" buying_trigger="pipeline gap" outcome="30-day growth experiment"
+/loop-creator standard trigger_mode=manual risk_mode=normal grade=LIGHT slug=proposal artifact="draft.md" reader="buyer" outcome="review-ready proposal" check_command="python3 scripts/verify_run.py" exit_when="verify_run exits 0"
+/loop-creator full trigger_mode=event risk_mode=deep event=post-merge grade=HEAVY slug=agent-workflow artifact="workflow.md" outcome="reusable loop policy"
+/loop-creator gs trigger_mode=interval risk_mode=deep cadence=7d depth=Quick grade=STANDARD slug=gtm-plan company="Acme" customer="B2B SaaS marketer" payer="marketing lead" buying_trigger="pipeline gap" outcome="30-day growth experiment"
 ```
 
 검증:

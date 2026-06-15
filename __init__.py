@@ -10,6 +10,7 @@ def _setup_cli(subparser):
     create = subs.add_parser("create", help="Create a loop run scaffold")
     create.add_argument("track", nargs="?", choices=["standard", "full", "gs"], help="standard, full, or gs")
     create.add_argument("--trigger-mode", default="manual", choices=["manual", "interval", "event"], help="What starts the loop: manual, interval, or event")
+    create.add_argument("--risk-mode", default="", choices=["", "quick", "normal", "deep", "blocked"], help="Risk-proportional verification depth")
     create.add_argument("--depth", default="", help="GS depth: Quick, standard, or Full GS")
     create.add_argument("--slug", default="", help="Folder slug")
     create.add_argument("--root-path", default="", help="Parent folder for loop-runs")
@@ -55,6 +56,7 @@ def _handle_cli(args):
         payload = {
             "track": args.track,
             "trigger_mode": args.trigger_mode,
+            "risk_mode": args.risk_mode,
             "depth": args.depth,
             "slug": args.slug,
             "root_path": args.root_path,
