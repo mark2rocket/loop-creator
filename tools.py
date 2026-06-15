@@ -431,6 +431,147 @@ Self-pace this loop. After each iteration, run the check command or evaluation s
 """
 
 
+
+def _predicate_list_template(track: str, depth: str) -> str:
+    data = {
+        "schema": "loop-creator-predicate-list-v1",
+        "rules": {
+            "single_active_predicate": True,
+            "passing_requires_evidence": True,
+            "blocked_requires_next_action": True,
+            "do_not_skip_verification": True,
+        },
+        "status_legend": {
+            "not_started": "Predicate has not been tested yet.",
+            "active": "Current predicate under test.",
+            "blocked": "Cannot continue until a documented blocker is resolved.",
+            "passing": "Verification passed and evidence is recorded.",
+        },
+        "predicates": [
+            {
+                "id": "pred-001",
+                "priority": 1,
+                "behavior": "The final artifact satisfies the primary reader outcome.",
+                "verification": "Run the declared check command or review surface and record evidence in logs/iteration-001.md.",
+                "status": "active",
+                "evidence": [],
+                "blocker": "",
+                "next_action": "Fill the first iteration with a real predicate check.",
+            }
+        ],
+    }
+    if track == "full" or depth == "Full GS":
+        data["predicates"].append(
+            {
+                "id": "pred-002",
+                "priority": 2,
+                "behavior": "The loop policy is replayable from repo/run state without chat history.",
+                "verification": "Read final/loop-spec.md plus session handoff and run replay/regression checks when available.",
+                "status": "not_started",
+                "evidence": [],
+                "blocker": "",
+                "next_action": "Define replay evidence before claiming architecture readiness.",
+            }
+        )
+    return json.dumps(data, ensure_ascii=False, indent=2) + "\n"
+
+
+def _session_handoff_template() -> str:
+    return """# Session Handoff
+
+## Verified Now
+- What is currently working: TODO: record verified behavior and evidence.
+- What verification actually ran: TODO: command, review surface, or readback.
+
+## Changed This Session
+- Artifact or behavior added: TODO: summarize material changes.
+- Infrastructure or harness changes: TODO: summarize scaffold/harness changes.
+
+## Broken Or Unverified
+- Known defect: TODO: record known defect or `none observed with evidence`.
+- Unverified path: TODO: record paths not yet checked.
+- Risk for the next session: TODO: state the main restart risk.
+
+## Next Best Step
+- Highest-priority unfinished predicate: TODO: predicate id.
+- Why it is next: TODO: reason.
+- What counts as passing: TODO: exact evidence.
+- What must not change during that step: TODO: constants/locked checks.
+
+## Commands
+- Startup: TODO: startup/readback command or `n/a with reason`.
+- Verification: TODO: validation/check command.
+- Focused debug command: TODO: focused command or `n/a with reason`.
+"""
+
+
+def _init_check_template(track: str, trigger_mode: str) -> str:
+    return f"""# Initialization Check
+
+Purpose: prove the run can be resumed and verified before implementation or rewriting starts.
+
+## Startup Readiness
+- standard startup path: TODO: command or readback path.
+- standard verification path: TODO: validation command or evaluator surface.
+- required files readable: state/brief.md, state/goal-contract.md, state/predicate-list.json, logs/iteration-001.md.
+- trigger mode: `{trigger_mode}`.
+- track: `{track}`.
+
+## Initialization Result
+- environment/readback status: TODO: PASS / BLOCKED with evidence.
+- missing prerequisites: TODO: list or `none with evidence`.
+- next safe action: TODO: first predicate or blocker resolution.
+"""
+
+
+def _clean_state_checklist_template() -> str:
+    return """# Clean State Checklist
+
+- [ ] The standard startup/readback path still works.
+- [ ] The standard verification path still runs.
+- [ ] Current progress is recorded in state/session-handoff.md.
+- [ ] state/predicate-list.json reflects what is passing versus unverified.
+- [ ] No half-finished step is left undocumented.
+- [ ] Temporary/debug artifacts are removed or explicitly justified.
+- [ ] The next session can continue without manual repair.
+
+## Evidence
+- Startup evidence: TODO.
+- Verification evidence: TODO.
+- Cleanup evidence: TODO.
+- Next session instruction: TODO.
+"""
+
+
+def _quality_document_template(track: str, depth: str) -> str:
+    return f"""# Quality Document
+
+Quality snapshot for the generated loop run. Update after material iteration batches and before final handoff.
+
+## Metadata
+- track: `{track}`
+- depth: `{depth or 'n/a'}`
+- last_updated: TODO
+
+## Artifact Domains
+
+| Domain | Grade | Verification | Key Gaps | Last Updated |
+|---|---|---|---|---|
+| Goal Contract | TODO | TODO | TODO | TODO |
+| Predicate State | TODO | TODO | TODO | TODO |
+| Iteration Evidence | TODO | TODO | TODO | TODO |
+| Final Artifact | TODO | TODO | TODO | TODO |
+| Handoff Cleanliness | TODO | TODO | TODO | TODO |
+
+## Change History
+
+### TODO
+- Changes:
+- Domains promoted:
+- New gaps identified:
+- Gaps closed:
+"""
+
 def _summary_template(run_path: Path) -> str:
     return f"""# User-facing Summary
 
@@ -458,6 +599,9 @@ def create_scaffold(args: dict[str, Any], **kwargs: Any) -> str:
         (run_path / d).mkdir(parents=True, exist_ok=True)
     _write(run_path / "state" / "brief.md", _brief_template(track, depth, args, run_path.name))
     _write(run_path / "state" / "goal-contract.md", _goal_contract_template(track, depth, args, run_path.name, trigger_mode))
+    _write(run_path / "state" / "predicate-list.json", _predicate_list_template(track, depth))
+    _write(run_path / "state" / "session-handoff.md", _session_handoff_template())
+    _write(run_path / "state" / "init-check.md", _init_check_template(track, trigger_mode))
     _write(run_path / "state" / "current.md", "# Current Artifact\n\nTODO: paste or link the current artifact/draft here.\n")
     if track == "gs":
         _write(run_path / "state" / "research-notes.md", f"# GS Research Notes\n\n- GS depth: `{depth}`\n- Public research allowed:\n- Revenue baseline / proxy:\n- Payer evidence:\n- Buying trigger evidence:\n- ICP evidence:\n- Channel evidence:\n- Assumptions / Unknowns:\n")
@@ -472,6 +616,8 @@ def create_scaffold(args: dict[str, Any], **kwargs: Any) -> str:
         _write(run_path / "final" / "experiment-plan.md", "# Experiment Plan\n\nTODO: 30-day experiment, decision rule, owner, measurement, stop/scale/pivot.\n")
     _write(run_path / "final" / "review-report.md", _review_template())
     _write(run_path / "final" / "quick-loop-card.md", _quick_loop_card_template(track, depth, trigger_mode, args, run_path))
+    _write(run_path / "final" / "clean-state-checklist.md", _clean_state_checklist_template())
+    _write(run_path / "final" / "quality-document.md", _quality_document_template(track, depth))
     _write(run_path / "final" / "user-facing-summary.md", _summary_template(run_path))
     _write(run_path / "logs" / "iteration-001.md", _iteration_template(1))
     _write(run_path / "loop-creator.json", _json({"track": track, "label": TRACK_LABELS[track], "trigger_mode": trigger_mode, "depth": depth, "grade": grade, "created_at": now.isoformat(timespec="seconds"), "source_skill": str(SKILL_ROOT), "gs_source": _source_status() if (track == "gs" and depth == "Full GS") else None}))
@@ -559,6 +705,81 @@ def _check_trace(log_path: Path) -> list[str]:
     return issues
 
 
+
+def _validate_predicate_list(run_path: Path) -> tuple[list[dict[str, str]], list[dict[str, str]]]:
+    issues: list[dict[str, str]] = []
+    warnings: list[dict[str, str]] = []
+    rel = "state/predicate-list.json"
+    path = run_path / rel
+    if not path.exists():
+        return ([{"type": "predicate_state_gap", "path": rel, "message": "predicate state file missing"}], warnings)
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        return ([{"type": "predicate_state_gap", "path": rel, "message": f"invalid JSON: {type(exc).__name__}"}], warnings)
+    predicates = data.get("predicates")
+    if not isinstance(predicates, list) or not predicates:
+        issues.append({"type": "predicate_state_gap", "path": rel, "message": "predicates must be a non-empty list"})
+        return issues, warnings
+    active_count = 0
+    for idx, pred in enumerate(predicates, 1):
+        prefix = f"predicate {idx}"
+        if not isinstance(pred, dict):
+            issues.append({"type": "predicate_state_gap", "path": rel, "message": f"{prefix} must be an object"})
+            continue
+        for field in ["id", "behavior", "verification", "status", "evidence", "next_action"]:
+            value = pred.get(field)
+            if value in (None, "") or (isinstance(value, str) and "TODO" in value):
+                issues.append({"type": "predicate_state_gap", "path": rel, "message": f"{prefix} missing or TODO: {field}"})
+        status = pred.get("status")
+        if status not in {"not_started", "active", "blocked", "passing"}:
+            issues.append({"type": "predicate_state_gap", "path": rel, "message": f"{prefix} invalid status: {status}"})
+        if status == "active":
+            active_count += 1
+        evidence = pred.get("evidence")
+        if not isinstance(evidence, list):
+            issues.append({"type": "predicate_state_gap", "path": rel, "message": f"{prefix} evidence must be a list"})
+        elif status == "passing" and not evidence:
+            issues.append({"type": "predicate_state_gap", "path": rel, "message": f"{prefix} passing requires evidence"})
+        if status == "blocked":
+            if not str(pred.get("blocker") or "").strip():
+                issues.append({"type": "predicate_state_gap", "path": rel, "message": f"{prefix} blocked requires blocker"})
+            if not str(pred.get("next_action") or "").strip():
+                issues.append({"type": "predicate_state_gap", "path": rel, "message": f"{prefix} blocked requires next_action"})
+    if active_count > 1:
+        issues.append({"type": "predicate_state_gap", "path": rel, "message": "only one active predicate allowed"})
+    if active_count == 0 and not any(isinstance(p, dict) and p.get("status") == "passing" for p in predicates):
+        warnings.append({"type": "quality_warning", "path": rel, "message": "no active or passing predicate recorded"})
+    return issues, warnings
+
+
+def _require_markers(text: str, *, rel: str, markers: list[str], issue_type: str) -> list[dict[str, str]]:
+    return [{"type": issue_type, "path": rel, "message": f"missing marker: {marker}"} for marker in markers if marker not in text]
+
+
+def _validate_restartability_artifacts(run_path: Path) -> tuple[list[dict[str, str]], list[dict[str, str]]]:
+    issues: list[dict[str, str]] = []
+    warnings: list[dict[str, str]] = []
+    handoff = _read(run_path / "state" / "session-handoff.md")
+    issues.extend(_require_markers(handoff, rel="state/session-handoff.md", issue_type="handoff_gap", markers=["## Verified Now", "## Changed This Session", "## Broken Or Unverified", "## Next Best Step", "## Commands"]))
+    if "TODO" in handoff:
+        issues.append({"type": "handoff_gap", "path": "state/session-handoff.md", "message": "session handoff still contains TODO"})
+    init_check = _read(run_path / "state" / "init-check.md")
+    issues.extend(_require_markers(init_check, rel="state/init-check.md", issue_type="init_check_gap", markers=["## Startup Readiness", "standard startup path", "standard verification path", "## Initialization Result"]))
+    if "TODO" in init_check:
+        issues.append({"type": "init_check_gap", "path": "state/init-check.md", "message": "init check still contains TODO"})
+    clean = _read(run_path / "final" / "clean-state-checklist.md")
+    issues.extend(_require_markers(clean, rel="final/clean-state-checklist.md", issue_type="clean_state_gap", markers=["# Clean State Checklist", "## Evidence", "Startup evidence", "Verification evidence", "Next session instruction"]))
+    if "- [ ]" in clean:
+        issues.append({"type": "clean_state_gap", "path": "final/clean-state-checklist.md", "message": "clean-state checklist has unchecked items"})
+    if "TODO" in clean:
+        issues.append({"type": "clean_state_gap", "path": "final/clean-state-checklist.md", "message": "clean-state checklist still contains TODO"})
+    quality = _read(run_path / "final" / "quality-document.md")
+    issues.extend(_require_markers(quality, rel="final/quality-document.md", issue_type="quality_doc_gap", markers=["## Artifact Domains", "Goal Contract", "Predicate State", "Iteration Evidence", "Handoff Cleanliness", "## Change History"]))
+    if "TODO" in quality:
+        issues.append({"type": "quality_doc_gap", "path": "final/quality-document.md", "message": "quality document still contains TODO"})
+    return issues, warnings
+
 def _validate_path(run_path: Path) -> dict[str, Any]:
     issues: list[dict[str, str]] = []
     warnings: list[dict[str, str]] = []
@@ -568,7 +789,7 @@ def _validate_path(run_path: Path) -> dict[str, Any]:
     track = _normalize_track(meta.get("track")) or "standard"
     depth = _normalize_depth(meta.get("depth"), track)
     grade = _normalize_grade(meta.get("grade"), track, depth)
-    required = ["state/brief.md", "state/goal-contract.md", "state/current.md", "state/research-notes.md", "final/improved-draft.md", "final/review-report.md", "final/quick-loop-card.md", "final/user-facing-summary.md", "final/gs-harness.md" if track == "gs" else "final/harness.md"]
+    required = ["state/brief.md", "state/goal-contract.md", "state/predicate-list.json", "state/session-handoff.md", "state/init-check.md", "state/current.md", "state/research-notes.md", "final/improved-draft.md", "final/review-report.md", "final/quick-loop-card.md", "final/clean-state-checklist.md", "final/quality-document.md", "final/user-facing-summary.md", "final/gs-harness.md" if track == "gs" else "final/harness.md"]
     if track == "full" or depth == "Full GS":
         required.append("final/loop-spec.md")
     if track == "gs":
@@ -576,6 +797,12 @@ def _validate_path(run_path: Path) -> dict[str, Any]:
     for rel in required:
         if not (run_path / rel).exists():
             issues.append({"type": "scaffold_gap", "path": rel, "message": "required file missing"})
+    pred_issues, pred_warnings = _validate_predicate_list(run_path)
+    issues.extend(pred_issues)
+    warnings.extend(pred_warnings)
+    restart_issues, restart_warnings = _validate_restartability_artifacts(run_path)
+    issues.extend(restart_issues)
+    warnings.extend(restart_warnings)
     brief = _read(run_path / "state" / "brief.md")
     for label in ["Artifact / draft", "Reader / evaluator", "Desired outcome", "Constraints / evidence permission"]:
         if not _has_non_todo_value(brief, label):

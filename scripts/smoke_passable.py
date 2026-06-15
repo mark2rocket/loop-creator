@@ -202,6 +202,135 @@ def _fill_review(run: pathlib.Path) -> None:
     )
 
 
+
+def _fill_restartability_artifacts(run: pathlib.Path) -> None:
+    (run / "state" / "predicate-list.json").write_text(
+        json.dumps(
+            {
+                "schema": "loop-creator-predicate-list-v1",
+                "rules": {
+                    "single_active_predicate": True,
+                    "passing_requires_evidence": True,
+                    "blocked_requires_next_action": True,
+                    "do_not_skip_verification": True,
+                },
+                "predicates": [
+                    {
+                        "id": "pred-001",
+                        "priority": 1,
+                        "behavior": "final report summarizes five measured iteration traces",
+                        "verification": "loop_creator_validate_run returns passable true with zero issue counts",
+                        "status": "passing",
+                        "evidence": ["scripts/smoke_passable.py final_validation passable true", "final/review-report.md Loop Trace Summary"],
+                        "blocker": "",
+                        "next_action": "archive smoke evidence and keep validator strict",
+                    }
+                ],
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (run / "state" / "session-handoff.md").write_text(
+        """# Session Handoff
+
+## Verified Now
+- What is currently working: local smoke fixture has five concrete iteration logs and a final review report.
+- What verification actually ran: tools.validate_run and tools.summarize_run through scripts/smoke_passable.py.
+
+## Changed This Session
+- Artifact or behavior added: restartability artifacts are filled with concrete evidence.
+- Infrastructure or harness changes: predicate-list, init-check, clean-state, and quality-document are checked by validator.
+
+## Broken Or Unverified
+- Known defect: none observed in local validator fixture.
+- Unverified path: external production artifact quality remains outside this smoke test.
+- Risk for the next session: synthetic fixtures can overfit if new checks are added without new negative cases.
+
+## Next Best Step
+- Highest-priority unfinished predicate: pred-001 maintenance only.
+- Why it is next: validator shape should remain stable after plugin changes.
+- What counts as passing: final validation has no blockers and no warnings.
+- What must not change during that step: do not weaken evidence checks to make the fixture pass.
+
+## Commands
+- Startup: python3 -m py_compile __init__.py schemas.py tools.py scripts/smoke_passable.py scripts/check_update.py
+- Verification: python3 scripts/smoke_passable.py
+- Focused debug command: python3 - <<'PY' import tools, json; print(json.loads(tools.validate_run({'path':'<run>'}))) PY
+""",
+        encoding="utf-8",
+    )
+    (run / "state" / "init-check.md").write_text(
+        """# Initialization Check
+
+Purpose: prove the run can be resumed and verified before implementation or rewriting starts.
+
+## Startup Readiness
+- standard startup path: python3 -m py_compile __init__.py schemas.py tools.py scripts/smoke_passable.py scripts/check_update.py
+- standard verification path: python3 scripts/smoke_passable.py
+- required files readable: state/brief.md, state/goal-contract.md, state/predicate-list.json, logs/iteration-001.md.
+- trigger mode: `manual`.
+- track: `standard`.
+
+## Initialization Result
+- environment/readback status: PASS with local Python compile and smoke script evidence.
+- missing prerequisites: none observed in local fixture.
+- next safe action: run final validator and inspect warning count.
+""",
+        encoding="utf-8",
+    )
+    (run / "final" / "clean-state-checklist.md").write_text(
+        """# Clean State Checklist
+
+- [x] The standard startup/readback path still works.
+- [x] The standard verification path still runs.
+- [x] Current progress is recorded in state/session-handoff.md.
+- [x] state/predicate-list.json reflects what is passing versus unverified.
+- [x] No half-finished step is left undocumented.
+- [x] Temporary/debug artifacts are removed or explicitly justified.
+- [x] The next session can continue without manual repair.
+
+## Evidence
+- Startup evidence: py_compile command completed in smoke workflow.
+- Verification evidence: scripts/smoke_passable.py final validation passable true.
+- Cleanup evidence: no unchecked checklist item remains in this fixture.
+- Next session instruction: rerun smoke_passable.py after changing validator behavior.
+""",
+        encoding="utf-8",
+    )
+    (run / "final" / "quality-document.md").write_text(
+        """# Quality Document
+
+Quality snapshot for the generated loop run. Update after material iteration batches and before final handoff.
+
+## Metadata
+- track: `standard`
+- depth: `n/a`
+- last_updated: local smoke fixture run
+
+## Artifact Domains
+
+| Domain | Grade | Verification | Key Gaps | Last Updated |
+|---|---|---|---|---|
+| Goal Contract | A | validator checks required fields and spec addendum | synthetic fixture only | smoke run |
+| Predicate State | A | predicate-list passing state has evidence | one predicate fixture | smoke run |
+| Iteration Evidence | A | five concrete learning traces pass validator | local-only evidence | smoke run |
+| Final Artifact | B | review report summarizes trace and blockers | no real domain artifact | smoke run |
+| Handoff Cleanliness | A | session handoff and clean checklist are complete | no external runtime | smoke run |
+
+## Change History
+
+### smoke run
+- Changes: filled restartability artifacts and validator evidence.
+- Domains promoted: predicate state and handoff cleanliness.
+- New gaps identified: external artifact quality is out of scope.
+- Gaps closed: scaffold placeholders removed for local passable fixture.
+""",
+        encoding="utf-8",
+    )
+
 def main() -> int:
     root = tempfile.mkdtemp(prefix="loop-creator-smoke-")
     run = _create_run(root)
@@ -216,6 +345,7 @@ def main() -> int:
     _fill_goal_contract(run)
     _fill_iteration_logs(run, low_quality=True)
     _fill_review(run)
+    _fill_restartability_artifacts(run)
 
     low_quality_validation = json.loads(tools.validate_run({"path": str(run)}))["validation"]
     assert low_quality_validation["passable"] is True, low_quality_validation
