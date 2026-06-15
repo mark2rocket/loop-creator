@@ -10,6 +10,7 @@ import json
 import os
 import re
 import shlex
+import subprocess
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -26,13 +27,17 @@ except Exception:  # pragma: no cover
         return str(Path.home() / ".hermes")
 
 TRACK_LABELS = {"standard": "standard loop", "full": "full loop", "gs": "gs loop"}
+TRIGGER_MODES = {"manual": "manual", "interval": "interval", "event": "event"}
 GS_DEPTHS = {"quick": "Quick", "standard": "standard", "full": "Full GS", "full gs": "Full GS", "full-gs": "Full GS", "full_gs": "Full GS"}
+GRADES = {"light": "LIGHT", "standard": "STANDARD", "heavy": "HEAVY", "l": "LIGHT", "s": "STANDARD", "h": "HEAVY"}
 SKILL_ROOT = Path(get_hermes_home()) / "skills" / "strategy" / "loop-harness-creator"
 GS_SOURCE_ROOT = Path.home() / "haven-synk" / "30-Output" / "Teaching" / "lectures-challenges" / "50-harnesses" / "growth-strategy-ralph-kit"
 TRACE_SECTIONS = ["Loop Goal", "Input State", "Learning Trace", "Action Taken", "Evaluation Surface", "Result", "Failure Taxonomy", "Evidence Update", "Next Loop Condition"]
 TRACE_FIELD_HINTS = ["Target predicate", "Why this loop now", "Starting artifact", "Current constraint", "Controlled variable", "Prediction before change", "Measurement method", "Expected result", "Observed result", "Study delta", "Act decision", "Learning level", "Change made", "Mutation policy applied", "Rubric/test/review used", "Negative assertion checked", "Verdict", "Score or qualitative delta", "Type:", "New evidence added", "Continue / stop / escalate", "Next target"]
-GOAL_CONTRACT_FIELDS = ["goal_id", "objective", "completion_criteria", "hard_fails", "verification_surface", "budget", "lifecycle_state", "owner", "current_artifact_hash", "stale_update_guard", "next_continuation_condition"]
+GOAL_CONTRACT_FIELDS = ["goal_id", "grade", "trigger_mode", "objective", "completion_criteria", "hard_fails", "verification_surface", "budget", "lifecycle_state", "owner", "current_artifact_hash", "stale_update_guard", "next_continuation_condition"]
 LEARNING_TRACE_REQUIRED = ["Current constraint", "Controlled variable", "Prediction before change", "Measurement method", "Observed result", "Study delta", "Act decision", "Learning level"]
+SPEC_CONTRACT_FIELDS = ["non_goals", "must_read", "rejected_alternatives", "risks", "acceptance_criteria"]
+FAKE_EVIDENCE_MARKERS = ("not run", "notrun", "did not run", "didn't run", "assumed", "would pass", "should pass", "to be done", "tbd", "todo", "n/a", "pending", "placeholder", "will run", "not yet")
 SECRET_RE = re.compile(r"(?i)\b(api[_-]?key|secret|token|cookie|authorization|refresh[_-]?token|access[_-]?token)\s*[:=]\s*([^\s`'\"]{8,})")
 
 
@@ -72,6 +77,27 @@ def _normalize_depth(value: str | None, track: str) -> str:
     return GS_DEPTHS.get(raw, "standard")
 
 
+def _normalize_trigger_mode(value: str | None) -> str:
+    raw = (value or "manual").strip().lower().replace("_", "-")
+    aliases = {
+        "manual": "manual", "manually": "manual", "start": "manual", "once": "manual", "1": "manual",
+        "interval": "interval", "cadence": "interval", "schedule": "interval", "scheduled": "interval", "cron": "interval", "2": "interval",
+        "event": "event", "hook": "event", "hooks": "event", "pre-commit": "event", "post-edit": "event", "post-merge": "event", "3": "event",
+    }
+    return aliases.get(raw, "manual")
+
+
+def _default_grade(track: str, depth: str = "") -> str:
+    if track == "full" or depth == "Full GS":
+        return "HEAVY"
+    return "STANDARD"
+
+
+def _normalize_grade(value: str | None, track: str, depth: str = "") -> str:
+    raw = (value or "").strip().lower().replace("_", "-")
+    return GRADES.get(raw, _default_grade(track, depth))
+
+
 def _default_root(root_path: str | None) -> Path:
     if root_path:
         return Path(root_path).expanduser()
@@ -89,8 +115,9 @@ def _source_status() -> dict[str, Any]:
 
 
 def _brief_template(track: str, depth: str, args: dict[str, Any], run_id: str) -> str:
+    grade = _normalize_grade(args.get("grade"), track, depth)
     lines = [
-        "# Loop Run Brief", "", f"- run_id: `{run_id}`", f"- track: `{track}` / {TRACK_LABELS[track]}", f"- gs_depth: `{depth or 'n/a'}`", f"- created_at: {_now().isoformat(timespec='seconds')}", f"- source_skill: `{SKILL_ROOT}`", "",
+        "# Loop Run Brief", "", f"- run_id: `{run_id}`", f"- track: `{track}` / {TRACK_LABELS[track]}", f"- trigger_mode: `{_normalize_trigger_mode(args.get('trigger_mode'))}`", f"- gs_depth: `{depth or 'n/a'}`", f"- grade: `{grade}`", f"- created_at: {_now().isoformat(timespec='seconds')}", f"- source_skill: `{SKILL_ROOT}`", "",
         "## Minimum Brief", f"- Artifact / draft: {args.get('artifact') or 'TODO: paste path or draft text'}", f"- Reader / evaluator: {args.get('reader') or 'TODO'}", f"- Desired outcome: {args.get('outcome') or 'TODO'}", f"- Constraints / evidence permission: {args.get('constraints') or 'TODO'}", "", "## Track Selection Rationale",
     ]
     if track == "standard":
@@ -110,7 +137,7 @@ def _brief_template(track: str, depth: str, args: dict[str, Any], run_id: str) -
     return "\n".join(lines)
 
 
-def _harness_template(track: str, depth: str) -> str:
+def _harness_template(track: str, depth: str, trigger_mode: str = "manual") -> str:
     title = "GS Harness" if track == "gs" else "Harness"
     if track == "gs":
         weights = "Money path 25 / ICP+offer 20 / Channel 15 / Evidence 15 / Experiment 15 / Handoff 10"
@@ -125,6 +152,7 @@ def _harness_template(track: str, depth: str) -> str:
 
 ## Route
 - selected_track: `{track}` / {TRACK_LABELS[track]}
+- trigger_mode: `{trigger_mode}`
 - gs_depth: `{depth or 'n/a'}`
 
 ## Artifact Definition
@@ -165,6 +193,11 @@ def _harness_template(track: str, depth: str) -> str:
 
 ## Stop Rule
 Stop only when hard-fails are cleared, per-loop traces are complete, and expected next gain is below 5 points or blocked by human/domain input.
+
+## Anti-gaming Rules
+- Do not modify the check command or exit criteria to force success.
+- Do not skip, disable, or bypass checks to pass the exit condition.
+- If stuck after several iterations, stop and report blockers instead of gaming metrics.
 """
 
 
@@ -215,7 +248,8 @@ def _loop_spec_template(track: str, depth: str) -> str:
 """
 
 
-def _goal_contract_template(track: str, depth: str, args: dict[str, Any], run_id: str) -> str:
+def _goal_contract_template(track: str, depth: str, args: dict[str, Any], run_id: str, trigger_mode: str = "manual") -> str:
+    grade = _normalize_grade(args.get("grade"), track, depth)
     budget = "TODO: token / wall-clock / iteration / cost budget"
     if track == "standard":
         budget = "TODO: 5-8 predicate loops or explicit lower bound with reason"
@@ -227,6 +261,8 @@ def _goal_contract_template(track: str, depth: str, args: dict[str, Any], run_id
 
 ## Persistent Goal State
 - goal_id: `{run_id}`
+- grade: {grade}
+- trigger_mode: {trigger_mode}
 - objective: {args.get('outcome') or 'TODO: specific outcome this loop must achieve'}
 - completion_criteria: TODO: observable criteria that make completion auditable
 - hard_fails: TODO: conditions that block PASS/PASS_WITH_RISKS
@@ -236,7 +272,16 @@ def _goal_contract_template(track: str, depth: str, args: dict[str, Any], run_id
 - owner: human final approval / harness scaffolding / verifier completion gate
 - current_artifact_hash: TODO: hash, version, or source path of the starting artifact
 - stale_update_guard: goal_id + run_id + iteration_id + artifact_hash must match before state mutation
+- kickoff_boundary: kickoff/deeplink text does not install files, enable hooks, or prove autonomous execution
 - next_continuation_condition: TODO: named failed predicate, remaining hard-fail, material expected gain, or explicit human instruction
+
+## Spec Contract Addendum
+- non_goals: TODO: over-broad scopes or tempting expansions this run will not do
+- must_read: TODO: path + authority_reason for contract/boundary files or source artifacts
+- rejected_alternatives: TODO: at least two alternatives with category, alternative, and broken_boundary
+- risks: TODO: risk + severity + runnable mitigation + acceptance_ref when relevant
+- acceptance_criteria: TODO: criterion + verify.type/value + live evidence once verified
+- forbidden_paths: TODO: globs or paths that must not be touched, or explicit none with reason
 
 ## Completion Boundary
 - worker_claim_allowed: candidate_complete only
@@ -333,6 +378,59 @@ def _review_template() -> str:
 """
 
 
+def _quick_loop_card_template(track: str, depth: str, trigger_mode: str, args: dict[str, Any], run_path: Path) -> str:
+    label = TRACK_LABELS[track]
+    max_iter = "15" if track in {"standard", "full"} else "5" if depth == "Quick" else "10"
+    check = args.get("check_command") or "TODO: verification command or document/rubric check"
+    exit_when = args.get("exit_when") or "TODO: observable exit condition passes"
+    step_one = args.get("step_1") or "Fill state/brief.md, then complete logs/iteration-001.md with a real predicate check."
+    goal = args.get("outcome") or "TODO: observable goal for this loop"
+    cadence = args.get("cadence") or ("TODO: interval cadence" if trigger_mode == "interval" else "n/a")
+    event = args.get("event") or ("TODO: event hook" if trigger_mode == "event" else "n/a")
+    return f"""# Quick Loop Card
+
+## Copyable Kickoff
+```text
+Start the "{label}" loop.
+Goal: {goal}
+Max iterations: {max_iter}
+Trigger mode: {trigger_mode}
+Between iterations run: {check}
+Exit when: {exit_when}
+Step 1: {step_one}
+
+Self-pace this loop. After each iteration, run the check command or evaluation surface, read the output, and only continue if the exit condition is not met. Stop when the exit condition passes or max iterations is reached. Give a short status update each pass.
+```
+
+## Trigger
+- mode: `{trigger_mode}`
+- interval cadence: {cadence}
+- event hook: {event}
+
+## Anti-gaming
+- Do not modify the check command or exit criteria to force success.
+- Do not skip, disable, or bypass checks to pass the exit condition.
+- If stuck after several iterations, stop and report blockers instead of gaming metrics.
+
+## Install / Hook Boundary
+- This kickoff only gives the agent instructions. It does not install files or enable hooks.
+- Hook/event bundles must be written into the repo/runtime and the agent or session restarted before they exist.
+- Scaffold generation is not autonomous execution; validation evidence must be produced and read back.
+
+## Lightweight Learning Trace
+- Independent verifier pass: trust command/readback output, not implementer claims.
+- Guardrails learning: if the same failure repeats twice, record a guardrail before trying another fix.
+- Reflexion debug: after a failed repro, write the reflection to the iteration log before retrying.
+- Spec-first execution: process exactly one unchecked requirement/story per iteration, verify it, then mark it complete.
+
+## State Spine
+- Run folder: `{run_path}`
+- Durable goal: `state/goal-contract.md`
+- Learning trace: `logs/iteration-*.md`
+- Verifier-owned verdict: `final/review-report.md`
+"""
+
+
 def _summary_template(run_path: Path) -> str:
     return f"""# User-facing Summary
 
@@ -349,6 +447,8 @@ def create_scaffold(args: dict[str, Any], **kwargs: Any) -> str:
     if not track:
         return _json({"success": False, "error": "track must be one of: standard, full, gs"})
     depth = _normalize_depth(args.get("depth"), track)
+    grade = _normalize_grade(args.get("grade"), track, depth)
+    trigger_mode = _normalize_trigger_mode(args.get("trigger_mode"))
     now = _now()
     slug = _safe_slug(args.get("slug"), f"{track}-loop")
     run_path = _default_root(args.get("root_path")) / f"{now.strftime('%Y-%m-%d')}_{slug}"
@@ -357,13 +457,13 @@ def create_scaffold(args: dict[str, Any], **kwargs: Any) -> str:
     for d in ["state", "final", "logs"]:
         (run_path / d).mkdir(parents=True, exist_ok=True)
     _write(run_path / "state" / "brief.md", _brief_template(track, depth, args, run_path.name))
-    _write(run_path / "state" / "goal-contract.md", _goal_contract_template(track, depth, args, run_path.name))
+    _write(run_path / "state" / "goal-contract.md", _goal_contract_template(track, depth, args, run_path.name, trigger_mode))
     _write(run_path / "state" / "current.md", "# Current Artifact\n\nTODO: paste or link the current artifact/draft here.\n")
     if track == "gs":
         _write(run_path / "state" / "research-notes.md", f"# GS Research Notes\n\n- GS depth: `{depth}`\n- Public research allowed:\n- Revenue baseline / proxy:\n- Payer evidence:\n- Buying trigger evidence:\n- ICP evidence:\n- Channel evidence:\n- Assumptions / Unknowns:\n")
     else:
         _write(run_path / "state" / "research-notes.md", "# Research Notes / Limitation\n\nNo external research required yet. Add evidence if factual claims matter.\n")
-    _write(run_path / "final" / ("gs-harness.md" if track == "gs" else "harness.md"), _harness_template(track, depth))
+    _write(run_path / "final" / ("gs-harness.md" if track == "gs" else "harness.md"), _harness_template(track, depth, trigger_mode))
     if track == "full" or depth == "Full GS":
         _write(run_path / "final" / "loop-spec.md", _loop_spec_template(track, depth))
     _write(run_path / "final" / "improved-draft.md", "# Improved Draft\n\nTODO: produce after loop iterations.\n")
@@ -371,10 +471,11 @@ def create_scaffold(args: dict[str, Any], **kwargs: Any) -> str:
         _write(run_path / "final" / "growth-strategy.md", "# Growth Strategy\n\nTODO: money path, ICP, offer/channel, experiments, 7/30/90 roadmap.\n")
         _write(run_path / "final" / "experiment-plan.md", "# Experiment Plan\n\nTODO: 30-day experiment, decision rule, owner, measurement, stop/scale/pivot.\n")
     _write(run_path / "final" / "review-report.md", _review_template())
+    _write(run_path / "final" / "quick-loop-card.md", _quick_loop_card_template(track, depth, trigger_mode, args, run_path))
     _write(run_path / "final" / "user-facing-summary.md", _summary_template(run_path))
     _write(run_path / "logs" / "iteration-001.md", _iteration_template(1))
-    _write(run_path / "loop-creator.json", _json({"track": track, "label": TRACK_LABELS[track], "depth": depth, "created_at": now.isoformat(timespec="seconds"), "source_skill": str(SKILL_ROOT), "gs_source": _source_status() if (track == "gs" and depth == "Full GS") else None}))
-    return _json({"success": True, "path": str(run_path), "track": track, "label": TRACK_LABELS[track], "depth": depth, "validation": _validate_path(run_path), "next_action": "Fill state/brief.md and complete logs/iteration-001.md with a real predicate check."})
+    _write(run_path / "loop-creator.json", _json({"track": track, "label": TRACK_LABELS[track], "trigger_mode": trigger_mode, "depth": depth, "grade": grade, "created_at": now.isoformat(timespec="seconds"), "source_skill": str(SKILL_ROOT), "gs_source": _source_status() if (track == "gs" and depth == "Full GS") else None}))
+    return _json({"success": True, "path": str(run_path), "track": track, "label": TRACK_LABELS[track], "trigger_mode": trigger_mode, "depth": depth, "grade": grade, "validation": _validate_path(run_path), "next_action": "Fill state/brief.md and complete logs/iteration-001.md with a real predicate check."})
 
 
 def _read(path: Path) -> str:
@@ -395,7 +496,10 @@ def _meta(run_path: Path) -> dict[str, Any]:
     brief = _read(run_path / "state" / "brief.md")
     track = "gs" if "track: `gs`" in brief else "full" if "track: `full`" in brief else "standard"
     depth_match = re.search(r"gs_depth:\s*`([^`]+)`", brief)
-    return {"track": track, "depth": "" if not depth_match else depth_match.group(1)}
+    grade_match = re.search(r"grade:\s*`([^`]+)`", brief)
+    trigger_match = re.search(r"trigger_mode:\s*`([^`]+)`", brief)
+    depth = "" if not depth_match else depth_match.group(1)
+    return {"track": track, "trigger_mode": _normalize_trigger_mode(trigger_match.group(1) if trigger_match else None), "depth": depth, "grade": _normalize_grade(grade_match.group(1) if grade_match else None, track, depth)}
 
 
 def _field_value(text: str, label: str) -> str:
@@ -422,6 +526,15 @@ def _normalize_quality_value(value: str) -> str:
     value = re.sub(r"\b\d+\b", "N", value)
     value = re.sub(r"iteration-\d+|log\s+\d+|predicate\s+\d+", "item N", value)
     return re.sub(r"\s+", " ", value).strip()
+
+
+def _fake_evidence_hits(text: str) -> list[str]:
+    lowered = (text or "").lower()
+    return [marker for marker in FAKE_EVIDENCE_MARKERS if marker in lowered]
+
+
+def _fake_evidence_issues(text: str, *, path: str) -> list[dict[str, str]]:
+    return [{"type": "evidence_gap", "path": path, "message": f"fake evidence marker present: {marker}"} for marker in _fake_evidence_hits(text)]
 
 
 def _check_trace(log_path: Path) -> list[str]:
@@ -454,7 +567,8 @@ def _validate_path(run_path: Path) -> dict[str, Any]:
     meta = _meta(run_path)
     track = _normalize_track(meta.get("track")) or "standard"
     depth = _normalize_depth(meta.get("depth"), track)
-    required = ["state/brief.md", "state/goal-contract.md", "state/current.md", "state/research-notes.md", "final/improved-draft.md", "final/review-report.md", "final/user-facing-summary.md", "final/gs-harness.md" if track == "gs" else "final/harness.md"]
+    grade = _normalize_grade(meta.get("grade"), track, depth)
+    required = ["state/brief.md", "state/goal-contract.md", "state/current.md", "state/research-notes.md", "final/improved-draft.md", "final/review-report.md", "final/quick-loop-card.md", "final/user-facing-summary.md", "final/gs-harness.md" if track == "gs" else "final/harness.md"]
     if track == "full" or depth == "Full GS":
         required.append("final/loop-spec.md")
     if track == "gs":
@@ -474,7 +588,24 @@ def _validate_path(run_path: Path) -> dict[str, Any]:
         issues.append({"type": "goal_contract_gap", "path": "state/goal-contract.md", "message": "completion boundary must distinguish candidate_complete from achieved/PASS"})
     if "budget_limited" not in goal_contract:
         issues.append({"type": "goal_contract_gap", "path": "state/goal-contract.md", "message": "budget_limited soft-stop rule missing"})
+    if "kickoff_boundary" not in goal_contract:
+        issues.append({"type": "goal_contract_gap", "path": "state/goal-contract.md", "message": "kickoff/install boundary missing"})
+    quick_card = _read(run_path / "final" / "quick-loop-card.md")
+    for marker in ["## Copyable Kickoff", "Goal:", "Max iterations:", "Between iterations run:", "Exit when:", "Step 1:", "## Anti-gaming", "## Install / Hook Boundary", "## Lightweight Learning Trace"]:
+        if marker not in quick_card:
+            issues.append({"type": "quick_card_gap", "path": "final/quick-loop-card.md", "message": f"missing quick card marker: {marker}"})
     warnings.extend(_quality_warnings_for_fields(goal_contract, ["completion_criteria", "hard_fails", "next_continuation_condition"], path="state/goal-contract.md", min_chars=40))
+    spec_required_by_grade = {
+        "LIGHT": ["acceptance_criteria"],
+        "STANDARD": ["non_goals", "must_read", "rejected_alternatives", "risks", "acceptance_criteria"],
+        "HEAVY": ["non_goals", "must_read", "rejected_alternatives", "risks", "acceptance_criteria", "forbidden_paths"],
+    }
+    for label in spec_required_by_grade[grade]:
+        if not _has_non_todo_value(goal_contract, label):
+            issues.append({"type": "spec_contract_gap", "path": "state/goal-contract.md", "message": f"missing or TODO for {grade}: {label}"})
+    for label in set(SPEC_CONTRACT_FIELDS + ["forbidden_paths"]) - set(spec_required_by_grade[grade]):
+        if not _has_non_todo_value(goal_contract, label):
+            warnings.append({"type": "quality_warning", "path": "state/goal-contract.md", "message": f"{label} is optional for {grade} but useful for auditability"})
     if track == "gs":
         for label in ["Company / product / offer", "Target growth outcome", "Target customer / buyer", "Payer / buying trigger / budget authority"]:
             if not _has_non_todo_value(brief, label):
@@ -489,6 +620,10 @@ def _validate_path(run_path: Path) -> dict[str, Any]:
         log_text = _read(log)
         for issue in _check_trace(log):
             issues.append({"type": "trace_gap", "path": log_rel, "message": issue})
+        for label in ["Observed result", "Evidence source", "New evidence added"]:
+            value = _field_value(log_text, label)
+            if value:
+                issues.extend(_fake_evidence_issues(value, path=log_rel))
         warnings.extend(_quality_warnings_for_fields(log_text, ["Prediction before change", "Observed result", "Act decision"], path=log_rel, min_chars=32))
         for label in trace_quality_values:
             value = _field_value(log_text, label)
@@ -500,6 +635,7 @@ def _validate_path(run_path: Path) -> dict[str, Any]:
             if len(normalized) == 1:
                 warnings.append({"type": "quality_warning", "path": "logs/", "message": f"{label} appears copy-pasted across {len(values)} iteration logs"})
     report = _read(run_path / "final" / "review-report.md")
+    issues.extend(_fake_evidence_issues(report, path="final/review-report.md"))
     if "## Loop Trace Summary" not in report:
         issues.append({"type": "trace_gap", "path": "final/review-report.md", "message": "missing Loop Trace Summary"})
     if "TODO" in report:
@@ -518,7 +654,7 @@ def _validate_path(run_path: Path) -> dict[str, Any]:
     by_type: dict[str, int] = {}
     for issue in issues:
         by_type[issue["type"]] = by_type.get(issue["type"], 0) + 1
-    return {"ok": not any(i["type"] == "scaffold_gap" for i in issues), "passable": len(issues) == 0, "track": track, "depth": depth, "min_logs": min_logs, "log_count": len(logs), "issues": issues, "issue_counts": by_type, "warnings": warnings}
+    return {"ok": not any(i["type"] == "scaffold_gap" for i in issues), "passable": len(issues) == 0, "track": track, "trigger_mode": _normalize_trigger_mode(meta.get("trigger_mode")), "depth": depth, "grade": grade, "min_logs": min_logs, "log_count": len(logs), "issues": issues, "issue_counts": by_type, "warnings": warnings}
 
 
 def validate_run(args: dict[str, Any], **kwargs: Any) -> str:
@@ -549,7 +685,29 @@ def summarize_run(args: dict[str, Any], **kwargs: Any) -> str:
     if top_issues:
         first = top_issues[0]
         next_mutation = f"Fix {first['type']} in {first['path']}: {first['message']}"
-    return _json({"success": True, "path": str(run_path), "track": meta.get("track"), "depth": meta.get("depth"), "passable": validation.get("passable", False), "issue_counts": validation.get("issue_counts", {}), "warning_count": len(validation.get("warnings", [])), "warnings": validation.get("warnings", [])[:5], "loop_trace": loop_lines, "top_blockers": top_issues, "next_mutation": next_mutation})
+    return _json({"success": True, "path": str(run_path), "track": meta.get("track"), "trigger_mode": _normalize_trigger_mode(meta.get("trigger_mode")), "depth": meta.get("depth"), "grade": validation.get("grade"), "passable": validation.get("passable", False), "issue_counts": validation.get("issue_counts", {}), "warning_count": len(validation.get("warnings", [])), "warnings": validation.get("warnings", [])[:5], "loop_trace": loop_lines, "top_blockers": top_issues, "next_mutation": next_mutation})
+
+
+def check_update(args: dict[str, Any], **kwargs: Any) -> str:
+    remote = args.get("remote") or "origin"
+    branch = args.get("branch") or "HEAD"
+    script = Path(__file__).parent / "scripts" / "check_update.py"
+    try:
+        proc = subprocess.run(
+            ["python3", str(script), "--remote", str(remote), "--branch", str(branch), "--format", "json"],
+            cwd=Path(__file__).parent,
+            text=True,
+            capture_output=True,
+            timeout=45,
+        )
+    except Exception as exc:
+        return _json({"success": False, "error": f"update check failed: {type(exc).__name__}: {exc}"})
+    if proc.returncode != 0:
+        return _json({"success": False, "error": (proc.stderr or proc.stdout).strip()})
+    try:
+        return _json(json.loads(proc.stdout))
+    except Exception:
+        return _json({"success": False, "error": "update check returned invalid JSON", "stdout": proc.stdout[-1000:]})
 
 
 def parse_kv_args(raw: str) -> dict[str, Any]:
@@ -585,9 +743,13 @@ def selector_text() -> str:
 3. gs loop — growth/revenue/GTM 전략 하네스
 
 바로 만들려면:
-- `/loop-creator standard slug=proposal artifact=... outcome=...`
-- `/loop-creator full slug=agent-workflow artifact=... outcome=...`
-- `/loop-creator gs depth=Quick slug=gtm-plan company=... customer=... payer=... buying_trigger=... outcome=...`
+- `/loop-creator standard trigger_mode=manual grade=LIGHT slug=proposal artifact=... outcome=... check_command="python3 scripts/verify_run.py" exit_when="verifier exits 0"`
+- `/loop-creator full trigger_mode=event event=post-merge grade=HEAVY slug=agent-workflow artifact=... outcome=...`
+- `/loop-creator gs trigger_mode=interval cadence=7d depth=Quick grade=STANDARD slug=gtm-plan company=... customer=... payer=... buying_trigger=... outcome=...`
+
+trigger_mode는 track과 별개야. track은 품질 깊이, trigger_mode는 시작 방식(manual/interval/event)을 뜻해.
+
+Spec grade: LIGHT는 acceptance 중심, STANDARD는 non_goals/must_read/rejected_alternatives/risks/acceptance, HEAVY는 forbidden_paths까지 blocker로 봐.
 
 생성된 run은 `state/goal-contract.md`와 `logs/iteration-*.md`의 Learning Trace를 채워야 passable이 돼.
 이제 공식 이름은 `/loop-creator`야.
@@ -602,7 +764,7 @@ def handle_loop_creator(raw_args: str) -> str:
     if not data.get("success"):
         return f"실패: {data.get('error')}"
     v = data.get("validation", {})
-    return "\n".join(["## loop-creator 생성 완료", f"- track: `{data['label']}`" + (f" / `{data.get('depth')}`" if data.get('depth') else ""), f"- path: `{data['path']}`", f"- scaffold_ok: `{v.get('ok')}` / passable: `{v.get('passable')}`", f"- blockers: `{v.get('issue_counts', {})}`", f"👉 다음 액션: `{data['path']}/state/brief.md` 채우고 `logs/iteration-001.md`를 실제 predicate check로 작성해."])
+    return "\n".join(["## loop-creator 생성 완료", f"- track: `{data['label']}`" + (f" / `{data.get('depth')}`" if data.get('depth') else "") + f" / trigger: `{data.get('trigger_mode')}` / grade: `{data.get('grade')}`", f"- path: `{data['path']}`", f"- quick card: `{data['path']}/final/quick-loop-card.md`", f"- scaffold_ok: `{v.get('ok')}` / passable: `{v.get('passable')}`", f"- blockers: `{v.get('issue_counts', {})}`", f"👉 다음 액션: `{data['path']}/state/brief.md` 채우고 `logs/iteration-001.md`를 실제 predicate check로 작성해."])
 
 
 def handle_loop_validate(raw_args: str) -> str:
@@ -611,7 +773,7 @@ def handle_loop_validate(raw_args: str) -> str:
         return "사용법: `/loop-validate <run-path>`"
     data = json.loads(validate_run({"path": path}))
     v = data["validation"]
-    lines = ["## loop-validate 결과", f"- path: `{data['path']}`", f"- track: `{v.get('track')}` / depth: `{v.get('depth') or 'n/a'}`", f"- scaffold_ok: `{v.get('ok')}` / passable: `{v.get('passable')}`", f"- logs: `{v.get('log_count')}/{v.get('min_logs')}`", f"- issue_counts: `{v.get('issue_counts', {})}`", f"- warnings: `{len(v.get('warnings', []))}`"]
+    lines = ["## loop-validate 결과", f"- path: `{data['path']}`", f"- track: `{v.get('track')}` / trigger: `{v.get('trigger_mode')}` / depth: `{v.get('depth') or 'n/a'}` / grade: `{v.get('grade')}`", f"- scaffold_ok: `{v.get('ok')}` / passable: `{v.get('passable')}`", f"- logs: `{v.get('log_count')}/{v.get('min_logs')}`", f"- issue_counts: `{v.get('issue_counts', {})}`", f"- warnings: `{len(v.get('warnings', []))}`"]
     for issue in v.get("issues", [])[:8]:
         lines.append(f"- {issue['type']} @ `{issue['path']}`: {issue['message']}")
     for warning in v.get("warnings", [])[:5]:
@@ -625,18 +787,40 @@ def handle_loop_summary(raw_args: str) -> str:
     if not path:
         return "사용법: `/loop-summary <run-path>`"
     data = json.loads(summarize_run({"path": path}))
-    lines = ["## loop-summary", f"- path: `{data['path']}`", f"- track: `{data.get('track')}` / depth: `{data.get('depth') or 'n/a'}`", f"- passable: `{data.get('passable')}`", f"- issue_counts: `{data.get('issue_counts')}`", f"- warnings: `{data.get('warning_count', 0)}`"]
+    lines = ["## loop-summary", f"- path: `{data['path']}`", f"- track: `{data.get('track')}` / trigger: `{data.get('trigger_mode', 'manual')}` / depth: `{data.get('depth') or 'n/a'}`", f"- passable: `{data.get('passable')}`", f"- issue_counts: `{data.get('issue_counts')}`", f"- warnings: `{data.get('warning_count', 0)}`"]
     for item in data.get("loop_trace", [])[:5]:
         lines.append(f"- {item['file']}: {item['goal']} → {item['result']} → {item['next']}")
     lines.append(f"👉 다음 액션: {data.get('next_mutation')}")
     return "\n".join(lines)
 
 
+def handle_loop_update_check(raw_args: str) -> str:
+    args = parse_kv_args(raw_args)
+    data = json.loads(check_update(args))
+    if not data.get("success"):
+        return f"## loop-update-check 실패\n- error: {data.get('error')}\n👉 다음 액션: remote/auth/network 상태를 확인해."
+    if data.get("update_available"):
+        return "\n".join([
+            "## loop-creator 업데이트 감지",
+            f"- version: `{data.get('local_version')}`",
+            f"- local: `{data.get('local_short')}`",
+            f"- remote: `{data.get('remote_short')}`",
+            "- 자동 적용: `false` — 승인 필요",
+            f"👉 다음 액션: 승인 후 `{data.get('apply_command')}` 실행",
+        ])
+    return "\n".join([
+        "## loop-creator 업데이트 확인",
+        f"- version: `{data.get('local_version')}`",
+        f"- status: 최신 상태 (`{data.get('local_short')}`)",
+        "👉 다음 액션: 없음",
+    ])
+
+
 def pre_gateway_dispatch(event=None, **kwargs: Any):
     text = getattr(event, "text", "") if event is not None else ""
     stripped = (text or "").strip()
     lowered = stripped.lower()
-    for cmd in ["loop-creator", "loop-validate", "loop-summary"]:
+    for cmd in ["loop-creator", "loop-validate", "loop-summary", "loop-update-check"]:
         if lowered == cmd or lowered.startswith(cmd + " "):
             return {"action": "rewrite", "text": "/" + stripped}
     if lowered == "loop creator" or lowered.startswith("loop creator "):

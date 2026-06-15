@@ -9,6 +9,7 @@ def _setup_cli(subparser):
 
     create = subs.add_parser("create", help="Create a loop run scaffold")
     create.add_argument("track", nargs="?", choices=["standard", "full", "gs"], help="standard, full, or gs")
+    create.add_argument("--trigger-mode", default="manual", choices=["manual", "interval", "event"], help="What starts the loop: manual, interval, or event")
     create.add_argument("--depth", default="", help="GS depth: Quick, standard, or Full GS")
     create.add_argument("--slug", default="", help="Folder slug")
     create.add_argument("--root-path", default="", help="Parent folder for loop-runs")
@@ -16,6 +17,11 @@ def _setup_cli(subparser):
     create.add_argument("--reader", default="", help="Reader/evaluator")
     create.add_argument("--outcome", default="", help="Desired outcome")
     create.add_argument("--constraints", default="", help="Constraints/evidence limits")
+    create.add_argument("--check-command", default="", help="Command or evaluation surface between iterations")
+    create.add_argument("--exit-when", default="", help="Observable exit condition")
+    create.add_argument("--step-1", default="", help="First concrete action")
+    create.add_argument("--cadence", default="", help="Interval cadence, e.g. 15m or 7d")
+    create.add_argument("--event", default="", help="Event/hook name, e.g. post-edit or pre-commit")
     create.add_argument("--company", default="", help="GS company/product/offer")
     create.add_argument("--growth-outcome", default="", help="GS growth outcome")
     create.add_argument("--customer", default="", help="GS target customer/buyer")
@@ -29,6 +35,10 @@ def _setup_cli(subparser):
 
     summary = subs.add_parser("summary", help="Summarize a loop run folder")
     summary.add_argument("path")
+
+    check_update = subs.add_parser("check-update", help="Read-only check for upstream plugin updates")
+    check_update.add_argument("--remote", default="origin")
+    check_update.add_argument("--branch", default="HEAD")
 
     subs.add_parser("selector", help="Print selector prompt")
 
@@ -44,6 +54,7 @@ def _handle_cli(args):
             return
         payload = {
             "track": args.track,
+            "trigger_mode": args.trigger_mode,
             "depth": args.depth,
             "slug": args.slug,
             "root_path": args.root_path,
@@ -51,6 +62,11 @@ def _handle_cli(args):
             "reader": args.reader,
             "outcome": args.outcome,
             "constraints": args.constraints,
+            "check_command": args.check_command,
+            "exit_when": args.exit_when,
+            "step_1": args.step_1,
+            "cadence": args.cadence,
+            "event": args.event,
             "company": args.company,
             "growth_outcome": args.growth_outcome,
             "customer": args.customer,
@@ -66,6 +82,9 @@ def _handle_cli(args):
         return
     if cmd == "summary":
         print(tools.summarize_run({"path": args.path}))
+        return
+    if cmd == "check-update":
+        print(tools.check_update({"remote": args.remote, "branch": args.branch}))
         return
 
 
@@ -94,8 +113,17 @@ def register(ctx):
         description="Summarize Loop Creator run package",
         emoji="🧾",
     )
+    ctx.register_tool(
+        name="loop_creator_check_update",
+        toolset="loop_creator",
+        schema=schemas.LOOP_CREATOR_CHECK_UPDATE,
+        handler=tools.check_update,
+        description="Read-only check for Loop Creator plugin updates",
+        emoji="🔎",
+    )
     ctx.register_command("loop-creator", tools.handle_loop_creator, description="Create a standard/full/gs loop scaffold", args_hint="[standard|full|gs] [key=value...]")
     ctx.register_command("loop-validate", tools.handle_loop_validate, description="Validate a loop harness run", args_hint="<run-path>")
     ctx.register_command("loop-summary", tools.handle_loop_summary, description="Summarize a loop harness run", args_hint="<run-path>")
+    ctx.register_command("loop-update-check", tools.handle_loop_update_check, description="Check whether loop-creator has upstream updates", args_hint="[remote=origin] [branch=HEAD]")
     ctx.register_hook("pre_gateway_dispatch", tools.pre_gateway_dispatch)
     ctx.register_cli_command("loop-creator", help="Create/validate/summarize Loop Creator runs", setup_fn=_setup_cli, handler_fn=_handle_cli)

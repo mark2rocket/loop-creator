@@ -24,6 +24,7 @@ def _create_run(root: str) -> pathlib.Path:
         tools.create_scaffold(
             {
                 "track": "standard",
+                "grade": "STANDARD",
                 "slug": "filled-run",
                 "root_path": root,
                 "artifact": "sample draft v1",
@@ -43,6 +44,8 @@ def _fill_goal_contract(run: pathlib.Path) -> None:
 
 ## Persistent Goal State
 - goal_id: `filled-run-smoke`
+- grade: STANDARD
+- trigger_mode: manual
 - objective: prove validator can reach passable after real evidence fields are filled
 - completion_criteria: five predicate-level logs include measured results, final review summarizes evidence, and no required validator field remains blank
 - hard_fails: missing goal contract, missing learning trace, opaque iteration wording, placeholder residue, or final review without loop summary
@@ -52,7 +55,16 @@ def _fill_goal_contract(run: pathlib.Path) -> None:
 - owner: human final approval / verifier completion gate
 - current_artifact_hash: sample-draft-v1-local-fixture
 - stale_update_guard: goal_id filled-run-smoke + run_id + iteration_id + artifact_hash must match
+- kickoff_boundary: kickoff prompt is instruction text only; it does not install files, enable hooks, or prove autonomous execution
 - next_continuation_condition: continue only while validator reports a concrete blocker or warning that changes passability confidence
+
+## Spec Contract Addendum
+- non_goals: do not claim real domain artifact quality, do not mutate external repositories, do not bypass validator checks
+- must_read: README.md — plugin user contract; tools.py — validator contract; scripts/smoke_passable.py — regression evidence contract
+- rejected_alternatives: tempting_shortcut: mark scaffold passable without traces would break auditability; scope: require autonomous execution would exceed plugin MVP boundary
+- risks: synthetic fixture may overfit validator, medium severity, mitigated by low-quality warning fixture and final zero-warning fixture, acceptance_ref smoke_passable final_warning_count
+- acceptance_criteria: fresh scaffold fails with goal/trace gaps; low-quality fixture emits warnings; final fixture passes with zero warnings and live script output
+- forbidden_paths: no external repo paths, no credential files, no runtime profile secrets
 
 ## Completion Boundary
 - worker_claim_allowed: candidate_complete only

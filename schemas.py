@@ -11,13 +11,20 @@ LOOP_CREATOR_SCAFFOLD = {
         "type": "object",
         "properties": {
             "track": {"type": "string", "enum": ["standard", "full", "gs"]},
+            "trigger_mode": {"type": "string", "enum": ["manual", "interval", "event"], "description": "What starts the loop: manual user kickoff, interval/cadence, or event/hook."},
             "depth": {"type": "string", "description": "GS depth: Quick, standard, or Full GS."},
+            "grade": {"type": "string", "enum": ["LIGHT", "STANDARD", "HEAVY", "light", "standard", "heavy"], "description": "Spec gate depth. LIGHT requires acceptance evidence; STANDARD adds non-goals/context/alternatives/risks; HEAVY also blocks on forbidden paths."},
             "slug": {"type": "string"},
             "root_path": {"type": "string"},
             "artifact": {"type": "string"},
             "reader": {"type": "string"},
             "outcome": {"type": "string"},
             "constraints": {"type": "string"},
+            "check_command": {"type": "string", "description": "Command or evaluation surface to run between iterations for the quick kickoff card."},
+            "exit_when": {"type": "string", "description": "Observable exit condition for the quick kickoff card."},
+            "step_1": {"type": "string", "description": "First concrete action for the quick kickoff card."},
+            "cadence": {"type": "string", "description": "Interval cadence when trigger_mode=interval, e.g. 15m or 7d."},
+            "event": {"type": "string", "description": "Event or hook name when trigger_mode=event, e.g. post-edit, pre-commit, post-merge."},
             "company": {"type": "string"},
             "growth_outcome": {"type": "string"},
             "customer": {"type": "string"},
@@ -40,4 +47,16 @@ LOOP_CREATOR_SUMMARIZE_RUN = {
     "name": "loop_creator_summarize_run",
     "description": "Summarize a Loop Creator run folder: track, logs, validation blockers, and next mutation.",
     "parameters": {"type": "object", "properties": {"path": {"type": "string"}}, "required": ["path"]},
+}
+
+LOOP_CREATOR_CHECK_UPDATE = {
+    "name": "loop_creator_check_update",
+    "description": "Read-only check for whether the installed loop-creator plugin is behind its Git remote. Does not update automatically; approval is required before running hermes plugins update loop-creator.",
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "remote": {"type": "string", "description": "Git remote name, default origin."},
+            "branch": {"type": "string", "description": "Remote ref, default HEAD."},
+        },
+    },
 }
