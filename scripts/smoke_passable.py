@@ -35,7 +35,11 @@ def _create_run(root: str) -> pathlib.Path:
         )
     )
     assert created["success"] is True, created
-    return pathlib.Path(created["path"])
+    run = pathlib.Path(created["path"])
+    intake = (run / "state" / "intake.md").read_text(encoding="utf-8")
+    assert "## Goal Intake" in intake and "## Control Intake" in intake, intake
+    assert "missing_at_creation" in intake, intake
+    return run
 
 
 def _fill_goal_contract(run: pathlib.Path) -> None:

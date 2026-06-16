@@ -77,6 +77,86 @@ DEFAULT_CONTROL_POLICY = {
     },
     "deletion_rule": "Remove or downgrade any hook/rule that does not reduce a named failure mode after three reviewed uses.",
 }
+
+INTAKE_ALIASES = {
+    "goal": ["goal", "outcome"],
+    "artifact": ["artifact", "draft"],
+    "reader": ["reader", "evaluator"],
+    "verify": ["verify", "verification", "check_command", "exit_when", "success"],
+    "hard_fail": ["hard_fail", "hard_fails", "constraints"],
+    "context": ["context", "must_read", "source", "sources"],
+    "hook_moment": ["hook_moment", "hook", "hooks", "event"],
+    "boundary_rule": ["boundary_rule", "boundary", "forbidden"],
+    "escalation_rule": ["escalation_rule", "escalation", "human_gate"],
+    "deletion_rule": ["deletion_rule", "delete_rule", "remove_when"],
+}
+
+INTAKE_QUESTION_ORDER = [
+    "goal",
+    "artifact",
+    "verify",
+    "reader",
+    "hard_fail",
+    "context",
+    "hook_moment",
+    "boundary_rule",
+    "escalation_rule",
+    "deletion_rule",
+]
+
+INTAKE_QUESTION_COPY = {
+    "goal": {
+        "blocked": "이번 run이 실제로 성공시켜야 할 목표가 비어 있음",
+        "recommendation": "현재 초안을 특정 독자 기준으로 review-ready 상태까지 개선한다.",
+        "question": "이번 루프가 만들거나 개선할 산출물의 목표는 뭐야?",
+    },
+    "artifact": {
+        "blocked": "무엇을 읽고 고칠 artifact인지 불명확함",
+        "recommendation": 'artifact="draft.md" 또는 artifact="현재 제안서 초안"처럼 넣어.',
+        "question": "이번 루프가 다룰 artifact 또는 초안은 뭐야?",
+    },
+    "verify": {
+        "blocked": "완료를 무엇으로 판정할지 비어 있음",
+        "recommendation": 'verify="review rubric pass" 또는 check_command="python3 scripts/verify_run.py".',
+        "question": "이 루프는 무엇이 통과되면 완료라고 볼까?",
+    },
+    "reader": {
+        "blocked": "품질 기준을 누구 관점으로 볼지 불명확함",
+        "recommendation": 'reader="B2B 마케팅 리드"처럼 실제 평가자를 적어.',
+        "question": "누구 기준으로 이 artifact를 평가해야 해?",
+    },
+    "hard_fail": {
+        "blocked": "PASS를 막아야 할 실패 조건이 비어 있음",
+        "recommendation": 'hard_fail="검증 없이 완료 선언, exit criteria 조작, secret 저장".',
+        "question": "이 루프에서 절대 허용하면 안 되는 실패는 뭐야?",
+    },
+    "context": {
+        "blocked": "반드시 읽어야 할 기존 맥락이 있는지 불명확함",
+        "recommendation": 'must_read="README.md, product brief, prior review" 또는 context="none".',
+        "question": "시작 전에 반드시 읽어야 할 파일/맥락이 있어?",
+    },
+    "hook_moment": {
+        "blocked": "언제 자동 점검/기록/차단이 필요한지 비어 있음",
+        "recommendation": 'hook_moment="agent:step evidence 기록, agent:end PASS gate, session:end handoff".',
+        "question": "이 루프에서 꼭 걸어야 할 hook moment는 뭐야?",
+    },
+    "boundary_rule": {
+        "blocked": "Hook 시점에서 무엇을 막을지 boundary rule이 비어 있음",
+        "recommendation": 'boundary_rule="no_fake_evidence, no_secret_in_artifacts, do_not_modify_exit_criteria_to_pass".',
+        "question": "그 hook에서 절대 막아야 할 행동은 뭐야?",
+    },
+    "escalation_rule": {
+        "blocked": "언제 사람에게 넘길지 기준이 비어 있음",
+        "recommendation": 'escalation_rule="같은 실패 2회 반복 또는 forbidden path 필요 시 human approval".',
+        "question": "몇 번 막히거나 어떤 위험이 생기면 사람에게 넘길까?",
+    },
+    "deletion_rule": {
+        "blocked": "hook/rule이 효과 없을 때 제거할 기준이 비어 있음",
+        "recommendation": 'deletion_rule="3회 사용 후 실패 감소/검토비용 감소/재시작성 개선이 없으면 제거".',
+        "question": "이 hook/rule이 어떤 실패를 줄이지 못하면 제거하거나 강등할까?",
+    },
+}
+
 ACO_ISSUE_MAP = {
     "scaffold_gap": "A6.Structure",
     "brief_gap": "A6.Context/A6.Plan",
@@ -213,6 +293,88 @@ def _default_root(root_path: str | None) -> Path:
     return Path(os.getenv("TERMINAL_CWD") or os.getcwd()).expanduser() / "loop-runs"
 
 
+def _arg_value(args: dict[str, Any], field: str) -> Any:
+    for key in INTAKE_ALIASES.get(field, [field]):
+        value = args.get(key)
+        if value not in (None, ""):
+            return value
+    return None
+
+
+def _has_arg(args: dict[str, Any], field: str) -> bool:
+    value = _arg_value(args, field)
+    if value is None:
+        return False
+    text = str(value).strip()
+    return bool(text and text.lower() not in {"todo", "tbd", "n/a", "none?"})
+
+
+def _intake_status(args: dict[str, Any], track: str) -> dict[str, Any]:
+    allow_todo = bool(args.get("allow_todo") or args.get("force") or args.get("yes"))
+    missing = [field for field in INTAKE_QUESTION_ORDER if not _has_arg(args, field)]
+    next_field = "" if allow_todo or not missing else missing[0]
+    return {"allow_todo": allow_todo, "missing": missing, "next_field": next_field, "ready": allow_todo or not missing}
+
+
+def intake_question_text(args: dict[str, Any]) -> str:
+    track = _normalize_track(args.get("track")) or "standard"
+    status = _intake_status(args, track)
+    field = status.get("next_field") or "goal"
+    copy = INTAKE_QUESTION_COPY.get(field, INTAKE_QUESTION_COPY["goal"])
+    current = _arg_value(args, "goal") or _arg_value(args, "artifact") or f"{TRACK_LABELS.get(track, track)} 하네스를 만들려는 상태"
+    examples = [
+        "```text",
+        f"/loop-creator {track} goal=\"제안서 설득력 개선\" artifact=\"proposal.md\" reader=\"B2B 마케팅 리드\" verify=\"buyer-perspective review passes\" hard_fail=\"AI 티, 검증 없는 완료 선언\" context=\"README.md, prior review\" hook_moment=\"agent:step evidence 기록; agent:end PASS gate; session:end handoff\" boundary_rule=\"no_fake_evidence; do_not_modify_exit_criteria_to_pass\" escalation_rule=\"같은 실패 2회 반복 시 human approval\" deletion_rule=\"3회 후 실패 감소 없으면 제거\"",
+        "```",
+    ]
+    return "\n".join([
+        "## Loop Creator Intake",
+        f"현재 이해: {current}",
+        f"막힌 결정: {copy['blocked']}",
+        f"추천 답안: {copy['recommendation']}",
+        f"질문: {copy['question']}",
+        "",
+        "선택지는 2~3개만 쓰고 자유 입력도 가능해. 답을 한 줄 KV로 주면 바로 scaffold로 넘길게.",
+        "",
+        "예시:",
+        *examples,
+        "",
+        "급하면 `allow_todo=true`를 붙여서 빈칸 포함 scaffold를 만들 수 있어.",
+    ])
+
+
+def _intake_template(track: str, depth: str, args: dict[str, Any], run_id: str) -> str:
+    status = _intake_status(args, track)
+    lines = [
+        "# Intake",
+        "",
+        f"- run_id: `{run_id}`",
+        f"- track: `{track}` / {TRACK_LABELS[track]}",
+        f"- missing_at_creation: {', '.join(status['missing']) if status['missing'] else 'none'}",
+        f"- allow_todo: `{status['allow_todo']}`",
+        "",
+        "## Goal Intake",
+        f"- Goal: {_arg_value(args, 'goal') or 'TODO'}",
+        f"- Artifact: {_arg_value(args, 'artifact') or 'TODO'}",
+        f"- Reader / evaluator: {_arg_value(args, 'reader') or 'TODO'}",
+        f"- Success / verify: {_arg_value(args, 'verify') or 'TODO'}",
+        f"- Hard fail: {_arg_value(args, 'hard_fail') or 'TODO'}",
+        f"- Must-read context: {_arg_value(args, 'context') or 'TODO'}",
+        "",
+        "## Control Intake",
+        f"- Hook moment: {_arg_value(args, 'hook_moment') or 'TODO'}",
+        f"- Boundary rule: {_arg_value(args, 'boundary_rule') or 'TODO'}",
+        f"- Escalation rule: {_arg_value(args, 'escalation_rule') or 'TODO'}",
+        f"- Deletion rule: {_arg_value(args, 'deletion_rule') or 'TODO'}",
+        "",
+        "## Interview Rule",
+        "- Ask one question at a time.",
+        "- Prefer existing args, files, and track presets over asking the user for what can be inferred.",
+        "- Stop asking when goal, scope, constraints, completion gate, hook moment, boundary rule, escalation rule, and deletion rule are good enough to scaffold.",
+    ]
+    return "\n".join(lines)
+
+
 def _write(path: Path, content: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(_redact(content).rstrip() + "\n", encoding="utf-8")
@@ -227,7 +389,7 @@ def _brief_template(track: str, depth: str, args: dict[str, Any], run_id: str) -
     grade = _normalize_grade(args.get("grade"), track, depth)
     lines = [
         "# Loop Run Brief", "", f"- run_id: `{run_id}`", f"- track: `{track}` / {TRACK_LABELS[track]}", f"- trigger_mode: `{_normalize_trigger_mode(args.get('trigger_mode'))}`", f"- risk_mode: `{_normalize_risk_mode(args.get('risk_mode'), track, grade)}`", f"- gs_depth: `{depth or 'n/a'}`", f"- grade: `{grade}`", f"- created_at: {_now().isoformat(timespec='seconds')}", f"- source_skill: `{SKILL_ROOT}`", "",
-        "## Minimum Brief", f"- Artifact / draft: {args.get('artifact') or 'TODO: paste path or draft text'}", f"- Reader / evaluator: {args.get('reader') or 'TODO'}", f"- Desired outcome: {args.get('outcome') or 'TODO'}", f"- Constraints / evidence permission: {args.get('constraints') or 'TODO'}", "", "## Track Selection Rationale",
+        "## Minimum Brief", f"- Artifact / draft: {_arg_value(args, 'artifact') or 'TODO: paste path or draft text'}", f"- Reader / evaluator: {_arg_value(args, 'reader') or 'TODO'}", f"- Desired outcome: {_arg_value(args, 'goal') or 'TODO'}", f"- Constraints / evidence permission: {args.get('constraints') or _arg_value(args, 'hard_fail') or _arg_value(args, 'context') or 'TODO'}", "", "## Track Selection Rationale",
     ]
     if track == "standard":
         lines.append("Standard Loop selected: artifact quality is the product; reusable loop-policy evidence is not required.")
@@ -391,7 +553,7 @@ def _goal_contract_template(track: str, depth: str, args: dict[str, Any], run_id
 - goal_id: `{run_id}`
 - grade: {grade}
 - trigger_mode: {trigger_mode}
-- objective: {args.get('outcome') or 'TODO: specific outcome this loop must achieve'}
+- objective: {_arg_value(args, 'goal') or 'TODO: specific outcome this loop must achieve'}
 - completion_criteria: TODO: observable criteria that make completion auditable
 - hard_fails: TODO: conditions that block PASS/PASS_WITH_RISKS
 - verification_surface: TODO: files, commands, rubrics, reviewer, or live checks used to judge completion
@@ -512,7 +674,7 @@ def _quick_loop_card_template(track: str, depth: str, trigger_mode: str, args: d
     check = args.get("check_command") or "TODO: verification command or document/rubric check"
     exit_when = args.get("exit_when") or "TODO: observable exit condition passes"
     step_one = args.get("step_1") or "Fill state/brief.md, then complete logs/iteration-001.md with a real predicate check."
-    goal = args.get("outcome") or "TODO: observable goal for this loop"
+    goal = _arg_value(args, "goal") or "TODO: observable goal for this loop"
     cadence = args.get("cadence") or ("TODO: interval cadence" if trigger_mode == "interval" else "n/a")
     event = args.get("event") or ("TODO: event hook" if trigger_mode == "event" else "n/a")
     return f"""# Quick Loop Card
@@ -899,6 +1061,7 @@ def create_scaffold(args: dict[str, Any], **kwargs: Any) -> str:
         run_path = run_path.with_name(run_path.name + "-" + now.strftime("%H%M%S"))
     for d in ["state", "final", "logs"]:
         (run_path / d).mkdir(parents=True, exist_ok=True)
+    _write(run_path / "state" / "intake.md", _intake_template(track, depth, args, run_path.name))
     _write(run_path / "state" / "brief.md", _brief_template(track, depth, args, run_path.name))
     _write(run_path / "state" / "goal-contract.md", _goal_contract_template(track, depth, args, run_path.name, trigger_mode))
     _write(run_path / "state" / "aco-design-card.md", _aco_design_card_template(track, depth))
@@ -929,7 +1092,7 @@ def create_scaffold(args: dict[str, Any], **kwargs: Any) -> str:
     _write(run_path / "final" / "quality-document.md", _quality_document_template(track, depth))
     _write(run_path / "final" / "user-facing-summary.md", _summary_template(run_path))
     _write(run_path / "logs" / "iteration-001.md", _iteration_template(1))
-    _write(run_path / "loop-creator.json", _json({"track": track, "label": TRACK_LABELS[track], "trigger_mode": trigger_mode, "risk_mode": risk_mode, "depth": depth, "grade": grade, "created_at": now.isoformat(timespec="seconds"), "source_skill": str(SKILL_ROOT), "gs_source": _source_status() if (track == "gs" and depth == "Full GS") else None, "control_policy": DEFAULT_CONTROL_POLICY}))
+    _write(run_path / "loop-creator.json", _json({"track": track, "label": TRACK_LABELS[track], "trigger_mode": trigger_mode, "risk_mode": risk_mode, "depth": depth, "grade": grade, "created_at": now.isoformat(timespec="seconds"), "source_skill": str(SKILL_ROOT), "gs_source": _source_status() if (track == "gs" and depth == "Full GS") else None, "intake": _intake_status(args, track), "control_policy": DEFAULT_CONTROL_POLICY}))
     return _json({"success": True, "path": str(run_path), "track": track, "label": TRACK_LABELS[track], "trigger_mode": trigger_mode, "risk_mode": risk_mode, "depth": depth, "grade": grade, "validation": _validate_path(run_path), "next_action": "Fill state/brief.md, state/evidence-ledger.json, and logs/iteration-001.md with real predicate evidence."})
 
 
@@ -1284,7 +1447,7 @@ def _validate_path(run_path: Path) -> dict[str, Any]:
     depth = _normalize_depth(meta.get("depth"), track)
     grade = _normalize_grade(meta.get("grade"), track, depth)
     risk_mode = _normalize_risk_mode(meta.get("risk_mode"), track, grade)
-    required = ["state/brief.md", "state/goal-contract.md", "state/aco-design-card.md", "state/control-policy.md", "state/predicate-list.json", "state/evidence-ledger.json", "state/approval-gate.md", "state/story-ledger.jsonl", "state/steering-ledger.jsonl", "state/review-receipts.jsonl", "state/session-handoff.md", "state/init-check.md", "state/current.md", "state/research-notes.md", "final/improved-draft.md", "final/review-report.md", "final/quick-loop-card.md", "final/clean-state-checklist.md", "final/quality-document.md", "final/user-facing-summary.md", "final/gs-harness.md" if track == "gs" else "final/harness.md"]
+    required = ["state/intake.md", "state/brief.md", "state/goal-contract.md", "state/aco-design-card.md", "state/control-policy.md", "state/predicate-list.json", "state/evidence-ledger.json", "state/approval-gate.md", "state/story-ledger.jsonl", "state/steering-ledger.jsonl", "state/review-receipts.jsonl", "state/session-handoff.md", "state/init-check.md", "state/current.md", "state/research-notes.md", "final/improved-draft.md", "final/review-report.md", "final/quick-loop-card.md", "final/clean-state-checklist.md", "final/quality-document.md", "final/user-facing-summary.md", "final/gs-harness.md" if track == "gs" else "final/harness.md"]
     if track == "full" or depth == "Full GS":
         required.append("final/loop-spec.md")
     if track == "gs":
@@ -1485,7 +1648,10 @@ trigger_mode는 track과 별개야. track은 품질 깊이, trigger_mode는 시�
 
 Spec grade: LIGHT는 acceptance 중심, STANDARD는 non_goals/must_read/rejected_alternatives/risks/acceptance, HEAVY는 forbidden_paths까지 blocker로 봐.
 
-생성된 run은 `state/goal-contract.md`와 `logs/iteration-*.md`의 Learning Trace를 채워야 passable이 돼.
+`/loop-creator standard`처럼 track만 주면 바로 scaffold하지 않고 Goal + Control Intake 질문을 먼저 반환해.
+빈칸 포함 scaffold가 필요하면 `allow_todo=true`를 붙여.
+
+생성된 run은 `state/intake.md`, `state/goal-contract.md`, `state/control-policy.md`, `logs/iteration-*.md`의 Learning Trace를 채워야 passable이 돼.
 이제 공식 이름은 `/loop-creator`야.
 """.strip()
 
@@ -1494,11 +1660,14 @@ def handle_loop_creator(raw_args: str) -> str:
     args = parse_kv_args(raw_args)
     if not args.get("track"):
         return selector_text()
+    track = _normalize_track(args.get("track")) or "standard"
+    if not _intake_status(args, track)["ready"]:
+        return intake_question_text(args)
     data = json.loads(create_scaffold(args))
     if not data.get("success"):
         return f"실패: {data.get('error')}"
     v = data.get("validation", {})
-    return "\n".join(["## loop-creator 생성 완료", f"- track: `{data['label']}`" + (f" / `{data.get('depth')}`" if data.get('depth') else "") + f" / trigger: `{data.get('trigger_mode')}` / grade: `{data.get('grade')}`", f"- path: `{data['path']}`", f"- quick card: `{data['path']}/final/quick-loop-card.md`", f"- scaffold_ok: `{v.get('ok')}` / passable: `{v.get('passable')}`", f"- blockers: `{v.get('issue_counts', {})}`", f"👉 다음 액션: `{data['path']}/state/brief.md` 채우고 `logs/iteration-001.md`를 실제 predicate check로 작성해."])
+    return "\n".join(["## loop-creator 생성 완료", f"- track: `{data['label']}`" + (f" / `{data.get('depth')}`" if data.get('depth') else "") + f" / trigger: `{data.get('trigger_mode')}` / grade: `{data.get('grade')}`", f"- path: `{data['path']}`", f"- quick card: `{data['path']}/final/quick-loop-card.md`", f"- scaffold_ok: `{v.get('ok')}` / passable: `{v.get('passable')}`", f"- blockers: `{v.get('issue_counts', {})}`", f"👉 다음 액션: `{data['path']}/state/intake.md`와 `state/brief.md`를 확인하고 `logs/iteration-001.md`를 실제 predicate check로 작성해."])
 
 
 def handle_loop_validate(raw_args: str) -> str:
