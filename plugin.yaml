@@ -1,6 +1,6 @@
 name: loop-creator
-version: "1.4.2"
-description: Loop Creator plugin — route standard/full/gs loop runs, ask goal/control intake questions before slash-command scaffolds, scaffold ACO/control-policy/evidence files, create quick kickoff cards, preserve restartable predicate/story state, validate observed evidence and approval ledgers, summarize ACO blockers, and check for upstream updates.
+version: "1.4.3"
+description: Loop Creator plugin — route standard/full/gs loop runs, ask goal/control intake questions, preview HSD diagrams before slash-command scaffolds, scaffold ACO/control-policy/evidence files, create quick kickoff cards, preserve restartable predicate/story state, validate observed evidence and approval ledgers, summarize ACO blockers, and check for upstream updates.
 provides_tools:
   - loop_creator_scaffold
   - loop_creator_validate_run

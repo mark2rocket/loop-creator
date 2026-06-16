@@ -39,6 +39,10 @@ def _create_run(root: str) -> pathlib.Path:
     intake = (run / "state" / "intake.md").read_text(encoding="utf-8")
     assert "## Goal Intake" in intake and "## Control Intake" in intake, intake
     assert "missing_at_creation" in intake, intake
+    hsd = (run / "state" / "hsd.md").read_text(encoding="utf-8")
+    assert "Harness Specification Document" in hsd and "## Approval Gate" in hsd, hsd
+    for rel in ["final/hsd-diagram.md", "final/harness-diagram.md", "final/harness-improvement-suggestions.md"]:
+        assert (run / rel).exists(), rel
     return run
 
 

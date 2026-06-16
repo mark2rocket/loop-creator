@@ -375,6 +375,202 @@ def _intake_template(track: str, depth: str, args: dict[str, Any], run_id: str) 
     return "\n".join(lines)
 
 
+def _hsd_values(track: str, depth: str, args: dict[str, Any]) -> dict[str, str]:
+    trigger_mode = _normalize_trigger_mode(args.get("trigger_mode"))
+    grade = _normalize_grade(args.get("grade"), track, depth)
+    verify = _arg_value(args, "verify") or "TODO: observable verification surface"
+    if args.get("check_command") and args.get("exit_when"):
+        verify = f"{args.get('check_command')} → {args.get('exit_when')}"
+    return {
+        "track": track,
+        "label": TRACK_LABELS[track],
+        "depth": depth or "n/a",
+        "grade": grade,
+        "trigger_mode": trigger_mode,
+        "goal": str(_arg_value(args, "goal") or "TODO"),
+        "artifact": str(_arg_value(args, "artifact") or "TODO"),
+        "reader": str(_arg_value(args, "reader") or "TODO"),
+        "verify": str(verify),
+        "hard_fail": str(_arg_value(args, "hard_fail") or "TODO"),
+        "context": str(_arg_value(args, "context") or "TODO"),
+        "hook_moment": str(_arg_value(args, "hook_moment") or "TODO"),
+        "boundary_rule": str(_arg_value(args, "boundary_rule") or "TODO"),
+        "escalation_rule": str(_arg_value(args, "escalation_rule") or "TODO"),
+        "deletion_rule": str(_arg_value(args, "deletion_rule") or DEFAULT_CONTROL_POLICY["deletion_rule"]),
+    }
+
+
+def _hsd_improvement_suggestions(values: dict[str, str]) -> list[str]:
+    suggestions: list[str] = []
+    hard_fail = values["hard_fail"].lower()
+    boundary = values["boundary_rule"].lower()
+    hook = values["hook_moment"].lower()
+    escalation = values["escalation_rule"].lower()
+    if "todo" in values["verify"].lower() or len(values["verify"]) < 18:
+        suggestions.append("검증 표면이 약해. command, rubric, reviewer, live check 중 하나를 더 구체화해.")
+    if "no_fake_evidence" not in boundary and "검증" not in hard_fail and "evidence" not in hard_fail:
+        suggestions.append("Boundary Rule에 `no_fake_evidence` 또는 '검증 없는 완료 선언 금지'를 명시해.")
+    if "agent:step" not in hook and "iteration" not in hook:
+        suggestions.append("매 iteration 후 evidence 기록 hook(`agent:step`)을 추가하면 trace 품질이 좋아져.")
+    if "agent:end" not in hook and "pass" not in hook and "완료" not in hook:
+        suggestions.append("완료 전 PASS gate(`agent:end`)를 넣어 worker 완료 선언과 verifier 판정을 분리해.")
+    if "todo" in escalation or len(values["escalation_rule"]) < 12:
+        suggestions.append("Escalation Rule이 약해. 같은 실패 2회 반복, forbidden path 필요, 비용 초과 중 하나를 기준으로 잡아.")
+    if not suggestions:
+        suggestions.append("현재 HSD는 scaffold로 넘길 수 있어. 다만 첫 iteration에서 실제 evidence surface를 반드시 관찰값으로 남겨.")
+    return suggestions[:3]
+
+
+def _hsd_template(track: str, depth: str, args: dict[str, Any], run_id: str) -> str:
+    v = _hsd_values(track, depth, args)
+    suggestions = _hsd_improvement_suggestions(v)
+    return f"""# Harness Specification Document
+
+- run_id: `{run_id}`
+- track: `{v['track']}` / {v['label']}
+- depth: `{v['depth']}`
+- grade: `{v['grade']}`
+- trigger_mode: `{v['trigger_mode']}`
+
+## 1. Goal
+- Goal: {v['goal']}
+- Artifact: {v['artifact']}
+- Reader / evaluator: {v['reader']}
+
+## 2. Requirement Contract
+- Success / verify: {v['verify']}
+- Hard fail: {v['hard_fail']}
+- Must-read context: {v['context']}
+
+## 3. Control Contract
+- Hook moment: {v['hook_moment']}
+- Boundary rule: {v['boundary_rule']}
+- Escalation rule: {v['escalation_rule']}
+- Deletion rule: {v['deletion_rule']}
+
+## 4. ACO Mapping
+- A6.Plan: Goal, artifact, reader, verify, hard-fail.
+- C3.Control: Hook moment, boundary rule, escalation rule, deletion rule.
+- O3.Operation: Evidence ledger, approval gate, predicate list, review report, handoff.
+
+## 5. Design Review Suggestions
+{chr(10).join(f'- {item}' for item in suggestions)}
+
+## Approval Gate
+- Design gate status: {'approved for scaffold' if args.get('approve_hsd') else 'preview / awaiting approval'}
+- To scaffold from slash command: add `approve_hsd=true`.
+"""
+
+
+def _hsd_diagram_template(track: str, depth: str, args: dict[str, Any]) -> str:
+    v = _hsd_values(track, depth, args)
+    suggestions = _hsd_improvement_suggestions(v)
+    return f"""# HSD Diagram
+
+## Design Flow
+
+```text
+Goal
+  └─ {v['goal']}
+      ↓
+Artifact
+  └─ {v['artifact']}
+      ↓
+Evaluator
+  └─ {v['reader']}
+      ↓
+Success Gate
+  └─ {v['verify']}
+      ↓
+Hard Fail / Boundary
+  ├─ hard_fail: {v['hard_fail']}
+  └─ boundary_rule: {v['boundary_rule']}
+      ↓
+Hook / Rule
+  ├─ hook_moment: {v['hook_moment']}
+  ├─ escalation_rule: {v['escalation_rule']}
+  └─ deletion_rule: {v['deletion_rule']}
+      ↓
+Scaffold Build
+  └─ state/ + final/ + logs/ evidence package
+```
+
+## 보강 제안
+{chr(10).join(f'- {item}' for item in suggestions)}
+"""
+
+
+def _harness_diagram_template(track: str, depth: str, args: dict[str, Any], run_path: Path) -> str:
+    harness_file = "final/gs-harness.md" if track == "gs" else "final/harness.md"
+    return f"""# Harness Build Diagram
+
+```text
+state/intake.md
+  ↓
+state/hsd.md
+  ↓
+state/goal-contract.md ── state/control-policy.md
+  ↓                         ↓
+{harness_file}        state/predicate-list.json
+  ↓                         ↓
+logs/iteration-*.md → state/evidence-ledger.json
+  ↓
+final/review-report.md
+  ↓
+final/user-facing-summary.md
+```
+
+## Restart Point
+- Run folder: `{run_path}`
+- Start from: `state/session-handoff.md`
+- Validate with: `/loop-validate {run_path}`
+"""
+
+
+def _harness_improvement_suggestions_template(track: str, depth: str, args: dict[str, Any], run_path: Path) -> str:
+    v = _hsd_values(track, depth, args)
+    suggestions = _hsd_improvement_suggestions(v)
+    return f"""# Harness Improvement Suggestions
+
+## Build Review
+- Built run folder: `{run_path}`
+- Track: `{v['track']}` / {v['label']}
+- Current readiness: scaffold only; not passable until real iteration/evidence/review fields are filled.
+
+## Suggested Reinforcements
+{chr(10).join(f'- {item}' for item in suggestions)}
+
+## Next Check
+- Fill `logs/iteration-001.md` with one real predicate check.
+- Record observed verification in `state/evidence-ledger.json`.
+- Run `/loop-validate {run_path}` before claiming candidate completion.
+"""
+
+
+def hsd_preview_text(args: dict[str, Any]) -> str:
+    track = _normalize_track(args.get("track")) or "standard"
+    depth = _normalize_depth(args.get("depth"), track)
+    v = _hsd_values(track, depth, args)
+    suggestions = _hsd_improvement_suggestions(v)
+    diagram = _hsd_diagram_template(track, depth, args)
+    compact_diagram = diagram.split("## 보강 제안", 1)[0].strip()
+    return "\n".join([
+        "## HSD Preview — Harness Specification Document",
+        f"- track: `{v['label']}` / trigger: `{v['trigger_mode']}` / grade: `{v['grade']}`",
+        f"- goal: {v['goal']}",
+        f"- artifact: {v['artifact']}",
+        f"- evaluator: {v['reader']}",
+        f"- success gate: {v['verify']}",
+        "",
+        compact_diagram,
+        "",
+        "## 보강 제안",
+        *(f"- {item}" for item in suggestions),
+        "",
+        "👉 다음 액션: 이 설계가 맞으면 같은 명령에 `approve_hsd=true`를 붙여 scaffold를 생성해.",
+    ])
+
+
 def _write(path: Path, content: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(_redact(content).rstrip() + "\n", encoding="utf-8")
@@ -1062,6 +1258,7 @@ def create_scaffold(args: dict[str, Any], **kwargs: Any) -> str:
     for d in ["state", "final", "logs"]:
         (run_path / d).mkdir(parents=True, exist_ok=True)
     _write(run_path / "state" / "intake.md", _intake_template(track, depth, args, run_path.name))
+    _write(run_path / "state" / "hsd.md", _hsd_template(track, depth, args, run_path.name))
     _write(run_path / "state" / "brief.md", _brief_template(track, depth, args, run_path.name))
     _write(run_path / "state" / "goal-contract.md", _goal_contract_template(track, depth, args, run_path.name, trigger_mode))
     _write(run_path / "state" / "aco-design-card.md", _aco_design_card_template(track, depth))
@@ -1087,12 +1284,15 @@ def create_scaffold(args: dict[str, Any], **kwargs: Any) -> str:
         _write(run_path / "final" / "growth-strategy.md", "# Growth Strategy\n\nTODO: money path, ICP, offer/channel, experiments, 7/30/90 roadmap.\n")
         _write(run_path / "final" / "experiment-plan.md", "# Experiment Plan\n\nTODO: 30-day experiment, decision rule, owner, measurement, stop/scale/pivot.\n")
     _write(run_path / "final" / "review-report.md", _review_template())
+    _write(run_path / "final" / "hsd-diagram.md", _hsd_diagram_template(track, depth, args))
+    _write(run_path / "final" / "harness-diagram.md", _harness_diagram_template(track, depth, args, run_path))
+    _write(run_path / "final" / "harness-improvement-suggestions.md", _harness_improvement_suggestions_template(track, depth, args, run_path))
     _write(run_path / "final" / "quick-loop-card.md", _quick_loop_card_template(track, depth, trigger_mode, args, run_path))
     _write(run_path / "final" / "clean-state-checklist.md", _clean_state_checklist_template())
     _write(run_path / "final" / "quality-document.md", _quality_document_template(track, depth))
     _write(run_path / "final" / "user-facing-summary.md", _summary_template(run_path))
     _write(run_path / "logs" / "iteration-001.md", _iteration_template(1))
-    _write(run_path / "loop-creator.json", _json({"track": track, "label": TRACK_LABELS[track], "trigger_mode": trigger_mode, "risk_mode": risk_mode, "depth": depth, "grade": grade, "created_at": now.isoformat(timespec="seconds"), "source_skill": str(SKILL_ROOT), "gs_source": _source_status() if (track == "gs" and depth == "Full GS") else None, "intake": _intake_status(args, track), "control_policy": DEFAULT_CONTROL_POLICY}))
+    _write(run_path / "loop-creator.json", _json({"track": track, "label": TRACK_LABELS[track], "trigger_mode": trigger_mode, "risk_mode": risk_mode, "depth": depth, "grade": grade, "created_at": now.isoformat(timespec="seconds"), "source_skill": str(SKILL_ROOT), "gs_source": _source_status() if (track == "gs" and depth == "Full GS") else None, "intake": _intake_status(args, track), "hsd": {"approved": bool(args.get("approve_hsd") or args.get("allow_todo")), "diagram": "final/hsd-diagram.md"}, "control_policy": DEFAULT_CONTROL_POLICY}))
     return _json({"success": True, "path": str(run_path), "track": track, "label": TRACK_LABELS[track], "trigger_mode": trigger_mode, "risk_mode": risk_mode, "depth": depth, "grade": grade, "validation": _validate_path(run_path), "next_action": "Fill state/brief.md, state/evidence-ledger.json, and logs/iteration-001.md with real predicate evidence."})
 
 
@@ -1447,7 +1647,7 @@ def _validate_path(run_path: Path) -> dict[str, Any]:
     depth = _normalize_depth(meta.get("depth"), track)
     grade = _normalize_grade(meta.get("grade"), track, depth)
     risk_mode = _normalize_risk_mode(meta.get("risk_mode"), track, grade)
-    required = ["state/intake.md", "state/brief.md", "state/goal-contract.md", "state/aco-design-card.md", "state/control-policy.md", "state/predicate-list.json", "state/evidence-ledger.json", "state/approval-gate.md", "state/story-ledger.jsonl", "state/steering-ledger.jsonl", "state/review-receipts.jsonl", "state/session-handoff.md", "state/init-check.md", "state/current.md", "state/research-notes.md", "final/improved-draft.md", "final/review-report.md", "final/quick-loop-card.md", "final/clean-state-checklist.md", "final/quality-document.md", "final/user-facing-summary.md", "final/gs-harness.md" if track == "gs" else "final/harness.md"]
+    required = ["state/intake.md", "state/hsd.md", "state/brief.md", "state/goal-contract.md", "state/aco-design-card.md", "state/control-policy.md", "state/predicate-list.json", "state/evidence-ledger.json", "state/approval-gate.md", "state/story-ledger.jsonl", "state/steering-ledger.jsonl", "state/review-receipts.jsonl", "state/session-handoff.md", "state/init-check.md", "state/current.md", "state/research-notes.md", "final/improved-draft.md", "final/review-report.md", "final/hsd-diagram.md", "final/harness-diagram.md", "final/harness-improvement-suggestions.md", "final/quick-loop-card.md", "final/clean-state-checklist.md", "final/quality-document.md", "final/user-facing-summary.md", "final/gs-harness.md" if track == "gs" else "final/harness.md"]
     if track == "full" or depth == "Full GS":
         required.append("final/loop-spec.md")
     if track == "gs":
@@ -1663,11 +1863,13 @@ def handle_loop_creator(raw_args: str) -> str:
     track = _normalize_track(args.get("track")) or "standard"
     if not _intake_status(args, track)["ready"]:
         return intake_question_text(args)
+    if not (args.get("approve_hsd") or args.get("allow_todo")):
+        return hsd_preview_text(args)
     data = json.loads(create_scaffold(args))
     if not data.get("success"):
         return f"실패: {data.get('error')}"
     v = data.get("validation", {})
-    return "\n".join(["## loop-creator 생성 완료", f"- track: `{data['label']}`" + (f" / `{data.get('depth')}`" if data.get('depth') else "") + f" / trigger: `{data.get('trigger_mode')}` / grade: `{data.get('grade')}`", f"- path: `{data['path']}`", f"- quick card: `{data['path']}/final/quick-loop-card.md`", f"- scaffold_ok: `{v.get('ok')}` / passable: `{v.get('passable')}`", f"- blockers: `{v.get('issue_counts', {})}`", f"👉 다음 액션: `{data['path']}/state/intake.md`와 `state/brief.md`를 확인하고 `logs/iteration-001.md`를 실제 predicate check로 작성해."])
+    return "\n".join(["## loop-creator 생성 완료", f"- track: `{data['label']}`" + (f" / `{data.get('depth')}`" if data.get('depth') else "") + f" / trigger: `{data.get('trigger_mode')}` / grade: `{data.get('grade')}`", f"- path: `{data['path']}`", f"- quick card: `{data['path']}/final/quick-loop-card.md`", f"- scaffold_ok: `{v.get('ok')}` / passable: `{v.get('passable')}`", f"- blockers: `{v.get('issue_counts', {})}`", f"👉 다음 액션: `{data['path']}/final/harness-diagram.md`와 `final/harness-improvement-suggestions.md`를 확인하고 `logs/iteration-001.md`를 실제 predicate check로 작성해."])
 
 
 def handle_loop_validate(raw_args: str) -> str:
