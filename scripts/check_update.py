@@ -48,6 +48,9 @@ def check_update(remote: str = "origin", branch: str = "HEAD") -> dict[str, Any]
     if url_code != 0:
         remote_url = ""
 
+    dirty_code, dirty_out, _ = _run(["git", "status", "--short"])
+    dirty_files = [line for line in dirty_out.splitlines() if line.strip()] if dirty_code == 0 else []
+
     update_available = local_sha != remote_sha
     return {
         "success": True,
@@ -60,6 +63,9 @@ def check_update(remote: str = "origin", branch: str = "HEAD") -> dict[str, Any]
         "remote_sha": remote_sha,
         "local_short": _short(local_sha),
         "remote_short": _short(remote_sha),
+        "dirty": bool(dirty_files),
+        "dirty_count": len(dirty_files),
+        "dirty_files": dirty_files[:20],
         "update_available": update_available,
         "apply_command": "hermes plugins update loop-creator",
         "approval_required": True,
@@ -82,6 +88,8 @@ def main() -> int:
         elif data.get("update_available"):
             print(f"loop-creator update available: {data['local_short']} -> {data['remote_short']}")
             print(f"Apply after approval: {data['apply_command']}")
+        elif data.get("dirty"):
+            print(f"loop-creator has local uncommitted changes: {data['local_version']} @ {data['local_short']} ({data['dirty_count']} files)")
         else:
             print(f"loop-creator is current: {data['local_version']} @ {data['local_short']}")
     return 0 if data.get("success") else 1

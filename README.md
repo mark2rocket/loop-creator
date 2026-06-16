@@ -158,6 +158,8 @@ Spec Contract Addendum 필드:
 `learn-harness-engineering`에서 가져온 핵심 운영 프리미티브는 교육용 course 구조가 아니라 **재시작 가능한 상태 파일**이다.
 
 - `state/predicate-list.json`: predicate별 `behavior`, `verification`, `status`, `evidence`, `next_action`을 갖는 state machine. `passing`은 evidence 없이는 허용하지 않는다.
+- `state/aco-design-card.md`: ACO Framework 기준으로 A6(Structure/Context/Plan/Execution/Verification/Improvement), C3(Hook/Rule/Loop), O3(State/Gate/Evidence)를 한 장에 묶는다. 실패했을 때 어느 레이어 문제인지 귀속하기 위한 카드다.
+- `state/control-policy.md`: Hermes의 실제 gateway hook 이벤트(`gateway:startup`, `session:start`, `session:end`, `session:reset`, `agent:start`, `agent:step`, `agent:end`, `command:*`)에 Hook/Rule을 연결한다. 추상 `pre_start` 같은 이름은 쓰지 않는다.
 - `state/evidence-ledger.json`: fable-ish에서 가져온 observed verification ledger. 변경 파일, 검증 명령, 성공/실패, `coverage_relation`, completion claim, stop-gate 상태를 기록한다.
 - `state/approval-gate.md`: Gajae-Code의 approval-gated pipeline에서 가져온 stage gate. spec/refinement/execution 전환마다 승인 상태를 명시한다.
 - `state/story-ledger.jsonl`: Ultragoal 스타일 story ledger. G001/G002 단위 목표, 상태, evidence, blocker, next story를 append-only로 남긴다.
@@ -196,6 +198,23 @@ Spec Contract Addendum 필드:
 
 한 줄 원칙: **검증했다고 말한 것보다 ledger에 관찰된 검증을 우선한다.**
 
+## ACO / Control Policy
+
+`loop-creator`는 ACO Framework를 새 track 이름으로 만들지 않는다. Standard / Full / GS Loop는 그대로 두고, ACO를 **진단·귀속·제어 정책 레이어**로 쓴다.
+
+- A6 — Architecture: `scaffold_gap`, `brief_gap`, `goal_contract_gap` 같은 문제를 Structure/Context/Plan/Execution/Verification/Improvement 중 어디가 빈칸인지로 귀속한다.
+- C3 — Control: Hook은 Hermes의 실제 이벤트명에 붙이고, Rule은 그 이벤트에서 무엇을 허용/금지/우선할지로 둔다.
+- O3 — Operation: State/Gate/Evidence는 기존 goal contract, predicate list, approval gate, evidence ledger, handoff로 운영한다.
+
+현재 control policy는 선언형이다. Hermes gateway hook 시스템은 기본적으로 에러를 로그로만 남기고 main pipeline을 막지 않으므로, MVP에서는 hard block을 만들지 않는다. 대신 validator와 completion gate가 아래를 검사한다.
+
+- 기존 Hermes 이벤트명을 사용했는가: `gateway:startup`, `session:start`, `session:end`, `session:reset`, `agent:start`, `agent:step`, `agent:end`, `command:*`
+- Boundary rule이 있는가: `no_fake_evidence`, `no_secret_in_artifacts`, `do_not_modify_exit_criteria_to_pass`, `candidate_complete_requires_evidence_ledger_update`
+- 추상 hook 이름(`pre_start`, `post_iteration`, `pre_completion`)으로 도망가지 않았는가
+- hook/rule 삭제 기준이 있는가: 3회 사용 후 실패 감소, review cost 감소, restartability 개선이 없으면 제거/강등
+
+`/loop-validate`와 `/loop-summary`는 blocker에 `aco_layer`를 붙이고 `ACO bottleneck`을 출력한다. 이 값은 “어느 파일을 고칠까”보다 “이번 실패가 A6/C3/O3 중 어디서 난 건가”를 보여주기 위한 것이다.
+
 ## Learning Trace
 
 각 `logs/iteration-*.md`는 `## Learning Trace` 섹션을 가져야 한다.
@@ -228,6 +247,8 @@ Spec Contract Addendum 필드:
 - `kickoff_boundary` 존재 여부
 - `final/quick-loop-card.md`의 kickoff schema, anti-gaming, install/hook boundary, lightweight learning trace 존재 여부
 - `state/predicate-list.json`의 state machine: status enum, single active predicate, passing evidence, blocked next action
+- `state/aco-design-card.md`의 A6/C3/O3/Deletion Rule marker
+- `state/control-policy.md`의 기존 Hermes hook event, boundary rule, blocking boundary, machine-readable policy
 - `state/evidence-ledger.json`의 observed verification: successful result, coverage relation, completion claim stop gate, failed-as-success 차단
 - `state/approval-gate.md`의 승인 상태와 completion claim 전 approval gate
 - `state/story-ledger.jsonl`의 story status/evidence/blocker
@@ -298,6 +319,7 @@ python3 scripts/check_update.py --format json
 1. fresh scaffold는 goal/trace evidence gap 때문에 passable이 아니어야 한다.
 2. low-quality filled fixture는 `passable: true`라도 quality warning을 내야 한다.
 3. good filled fixture는 `passable: true`, `final_warning_count: 0`이어야 한다.
+4. validation/summary에는 `aco_bottleneck`과 ACO issue layer 정보가 포함되어야 한다.
 
 예상 출력 요약:
 

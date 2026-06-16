@@ -442,6 +442,8 @@ def main() -> int:
     assert final_validation.get("issue_counts") == {}, final_validation
     assert final_validation.get("warnings") == [], final_validation
     assert final_summary.get("warning_count") == 0, final_summary
+    assert final_validation.get("aco_bottleneck") == "none", final_validation
+    assert final_summary.get("aco_bottleneck") == "none", final_summary
     assert "No validation blockers" in final_summary["next_mutation"], final_summary
 
     print(
@@ -454,6 +456,7 @@ def main() -> int:
                 "final_passable": final_validation["passable"],
                 "final_issue_counts": final_validation.get("issue_counts"),
                 "final_warning_count": len(final_validation.get("warnings", [])),
+                "final_aco_bottleneck": final_validation.get("aco_bottleneck"),
                 "summary_next_mutation": final_summary["next_mutation"],
             },
             ensure_ascii=False,

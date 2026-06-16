@@ -42,6 +42,68 @@ SPEC_CONTRACT_FIELDS = ["non_goals", "must_read", "rejected_alternatives", "risk
 FAKE_EVIDENCE_MARKERS = ("not run", "notrun", "did not run", "didn't run", "assumed", "would pass", "should pass", "to be done", "tbd", "todo", "n/a", "pending", "placeholder", "will run", "not yet")
 SECRET_RE = re.compile(r"(?i)\b(api[_-]?key|secret|token|cookie|authorization|refresh[_-]?token|access[_-]?token)\s*[:=]\s*([^\s`'\"]{8,})")
 
+HERMES_HOOK_EVENTS = [
+    "gateway:startup",
+    "session:start",
+    "session:end",
+    "session:reset",
+    "agent:start",
+    "agent:step",
+    "agent:end",
+    "command:*",
+]
+DEFAULT_CONTROL_POLICY = {
+    "hooks": {
+        "gateway:startup": ["check_active_loop_registry"],
+        "session:start": ["read_loop_handoff_if_active"],
+        "session:end": ["require_session_handoff_for_active_run"],
+        "session:reset": ["surface_resume_state_after_reset"],
+        "agent:start": ["load_goal_contract_if_referenced"],
+        "agent:step": ["append_step_observation_if_loop_run_active"],
+        "agent:end": ["suggest_evidence_ledger_update"],
+        "command:*": ["rewrite_or_validate_loop_commands"],
+    },
+    "event_rules": {
+        "agent:start": ["must_read_goal_contract_before_mutating_run"],
+        "agent:step": ["one_controlled_variable_per_iteration", "record_observed_result_before_next_mutation"],
+        "agent:end": ["candidate_complete_requires_evidence_ledger_update"],
+        "session:end": ["active_run_requires_session_handoff"],
+        "command:*": ["loop_creator_commands_must_not_modify_exit_criteria_to_pass"],
+    },
+    "blocking_boundary": {
+        "advisory_only": ["gateway:startup", "session:start", "agent:start", "agent:step", "agent:end", "session:reset"],
+        "validator_blocker": ["missing_boundary_rule", "fake_evidence", "missing_handoff_for_active_run", "completion_without_observed_verification"],
+        "hard_block_allowed_only_when": ["command:* policy returns explicit deny/rewrite", "future execution runner reaches permission or forbidden-path gate"],
+    },
+    "deletion_rule": "Remove or downgrade any hook/rule that does not reduce a named failure mode after three reviewed uses.",
+}
+ACO_ISSUE_MAP = {
+    "scaffold_gap": "A6.Structure",
+    "brief_gap": "A6.Context/A6.Plan",
+    "goal_contract_gap": "A6.Plan/O3.State",
+    "spec_contract_gap": "A6.Plan/C3.Rule",
+    "trace_gap": "C3.Loop/O3.Evidence",
+    "quick_card_gap": "C3.Rule/O3.State",
+    "evidence_gap": "O3.Evidence/O3.Gate",
+    "evidence_ledger_gap": "O3.Evidence/O3.Gate",
+    "stop_gate_gap": "O3.Gate",
+    "fresh_snapshot_gap": "O3.State/O3.Evidence",
+    "coverage_gap": "O3.Evidence/O3.Gate",
+    "gs_contract_gap": "A6.Plan/O3.Evidence",
+    "predicate_state_gap": "O3.State/C3.Loop",
+    "approval_gate_gap": "O3.Gate",
+    "story_ledger_gap": "O3.State/O3.Evidence",
+    "steering_ledger_gap": "O3.State/O3.Evidence",
+    "review_receipt_gap": "O3.Evidence/O3.Gate",
+    "handoff_gap": "O3.State",
+    "init_check_gap": "A6.Structure/O3.State",
+    "clean_state_gap": "O3.State/O3.Gate",
+    "quality_doc_gap": "A6.Improvement/O3.Evidence",
+    "control_policy_gap": "C3.Hook/C3.Rule",
+    "aco_design_gap": "A6.Structure/C3.Control/O3.Operation",
+    "quality_warning": "A6.Improvement",
+}
+
 
 def _redact(text: str) -> str:
     return SECRET_RE.sub(lambda m: f"{m.group(1)}=[REDACTED]", text or "")
@@ -49,6 +111,34 @@ def _redact(text: str) -> str:
 
 def _json(data: dict[str, Any]) -> str:
     return json.dumps(data, ensure_ascii=False, indent=2)
+
+
+def _aco_layer_for_issue(issue_type: str) -> str:
+    return ACO_ISSUE_MAP.get(issue_type, "ACO.Unmapped")
+
+
+def _annotate_findings(findings: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    for item in findings:
+        if isinstance(item, dict) and "aco_layer" not in item:
+            item["aco_layer"] = _aco_layer_for_issue(str(item.get("type") or ""))
+    return findings
+
+
+def _aco_summary(issues: list[dict[str, Any]], warnings: list[dict[str, Any]] | None = None) -> dict[str, Any]:
+    counts: dict[str, int] = {}
+    for item in issues:
+        layer = str(item.get("aco_layer") or _aco_layer_for_issue(str(item.get("type") or "")))
+        counts[layer] = counts.get(layer, 0) + 1
+    top_layer = "none"
+    if counts:
+        top_layer = sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))[0][0]
+    first_issue = issues[0] if issues else None
+    return {
+        "bottleneck": top_layer,
+        "issue_counts_by_layer": counts,
+        "first_blocker": first_issue,
+        "warning_count": len(warnings or []),
+    }
 
 
 def _now() -> datetime:
@@ -173,6 +263,25 @@ def _harness_template(track: str, depth: str, trigger_mode: str = "manual") -> s
 - selected_track: `{track}` / {TRACK_LABELS[track]}
 - trigger_mode: `{trigger_mode}`
 - gs_depth: `{depth or 'n/a'}`
+
+## ACO Architecture Layer
+### A6 — Architecture
+- Structure: run folder layout, artifact placement, permission boundary.
+- Context: required source/brief/current artifact boundaries.
+- Plan: completion criteria, hard-fails, verifier surface, budget.
+- Execution: maker/checker split, approval boundary, side-effect limits.
+- Verification: static/domain/execution/human gate ladder.
+- Improvement: failure taxonomy, policy update, skill/rule promotion or deletion.
+
+### C3 — Control
+- Hook: existing Hermes events from `state/control-policy.md`.
+- Rule: guiding/boundary/escalation rules tied to events.
+- Loop: one controlled variable, observed result, act decision, next mutation.
+
+### O3 — Operation
+- State: goal contract, predicate list, ledgers, handoff.
+- Gate: plan, permission, verification, completion, handoff.
+- Evidence: source/execution/review/user/business evidence with coverage relation.
 
 ## Artifact Definition
 - Artifact:
@@ -690,6 +799,80 @@ def _review_receipts_template() -> str:
     }
     return json.dumps(row, ensure_ascii=False) + "\n"
 
+def _aco_design_card_template(track: str, depth: str) -> str:
+    return f"""# ACO Harness Design Card
+
+## Goal
+- This run should improve: artifact quality for `{track}` loop{f' / {depth}' if depth else ''}.
+
+## A6 — Architecture
+- Structure: run package separates `state/`, `final/`, and `logs/` so work state, outputs, and trace evidence do not mix.
+- Context: `state/brief.md`, `state/current.md`, and `state/research-notes.md` define what the agent should read and what remains unknown.
+- Plan: `state/goal-contract.md` defines objective, completion criteria, hard-fails, verification surface, budget, and stale update guard.
+- Execution: `state/approval-gate.md`, `state/story-ledger.jsonl`, and `logs/iteration-*.md` separate approved execution from scaffold creation.
+- Verification: `state/evidence-ledger.json`, predicate checks, and `final/review-report.md` decide candidate completion versus PASS.
+- Improvement: `final/quality-document.md`, failure taxonomy, and policy update candidates record what should change next time.
+
+## C3 — Control
+- Hook: use existing Hermes events in `state/control-policy.md`; do not invent runtime events that Hermes cannot emit.
+- Rule: boundary rules block fake evidence, secret leakage, exit-criteria gaming, and completion without observed verification.
+- Loop: each iteration records target predicate, controlled variable, prediction, measurement, observed result, and act decision.
+
+## O3 — Operation
+- State: goal contract, predicate state, story ledger, and session handoff are the restartable state spine.
+- Gate: approval, verification, completion, and handoff gates separate worker claims from verifier/human PASS.
+- Evidence: source, execution, review, user/business evidence must be recorded as observed evidence, not planned evidence.
+
+## Deletion Rule
+- Remove or downgrade any hook/rule/template that does not reduce a named failure mode after three reviewed uses.
+"""
+
+
+def _control_policy_template() -> str:
+    policy = json.dumps(DEFAULT_CONTROL_POLICY, ensure_ascii=False, indent=2)
+    event_lines = "\n".join(f"- `{event}`: {', '.join(DEFAULT_CONTROL_POLICY['hooks'].get(event, []))}" for event in HERMES_HOOK_EVENTS)
+    rule_lines = "\n".join(f"- `{event}`: {', '.join(DEFAULT_CONTROL_POLICY['event_rules'].get(event, []))}" for event in sorted(DEFAULT_CONTROL_POLICY["event_rules"]))
+    return f"""# Control Policy
+
+Purpose: bind ACO Control 3 to real Hermes lifecycle events. These names must match Hermes gateway hook events, not abstract labels.
+
+## Existing Hermes Events Used
+{event_lines}
+
+## Event Rules
+{rule_lines}
+
+## Non-blocking / Blocking Boundary
+- advisory only: `gateway:startup`, `session:start`, `agent:start`, `agent:step`, `agent:end`, `session:reset`
+- validator blocker: missing boundary rule, fake evidence, missing handoff for active run, completion without observed verification
+- hard block allowed only when: `command:*` policy explicitly denies/rewrites, or a future execution runner reaches a permission/forbidden-path gate
+
+## Rule Classes
+### Guiding Rules
+- one_controlled_variable_per_iteration
+- record_observed_result_before_next_mutation
+
+### Boundary Rules
+- no_fake_evidence
+- no_secret_in_artifacts
+- do_not_modify_exit_criteria_to_pass
+- candidate_complete_requires_evidence_ledger_update
+
+### Escalation Rules
+- three_failed_iterations_requires_human_or_policy_update
+- dangerous_side_effect_requires_approval
+
+## Rule Deletion Criteria
+- Failure reduced: drift, fake evidence, missing handoff, uncontrolled iteration, or unsafe side effect.
+- Remove or downgrade if: after three reviewed uses the hook/rule does not catch a real failure, reduce review cost, or improve restartability.
+
+## Machine-readable Policy
+```json
+{policy}
+```
+"""
+
+
 def _summary_template(run_path: Path) -> str:
     return f"""# User-facing Summary
 
@@ -718,6 +901,8 @@ def create_scaffold(args: dict[str, Any], **kwargs: Any) -> str:
         (run_path / d).mkdir(parents=True, exist_ok=True)
     _write(run_path / "state" / "brief.md", _brief_template(track, depth, args, run_path.name))
     _write(run_path / "state" / "goal-contract.md", _goal_contract_template(track, depth, args, run_path.name, trigger_mode))
+    _write(run_path / "state" / "aco-design-card.md", _aco_design_card_template(track, depth))
+    _write(run_path / "state" / "control-policy.md", _control_policy_template())
     _write(run_path / "state" / "predicate-list.json", _predicate_list_template(track, depth))
     _write(run_path / "state" / "evidence-ledger.json", _evidence_ledger_template(track, grade, risk_mode))
     _write(run_path / "state" / "approval-gate.md", _approval_gate_template(track, risk_mode))
@@ -744,7 +929,7 @@ def create_scaffold(args: dict[str, Any], **kwargs: Any) -> str:
     _write(run_path / "final" / "quality-document.md", _quality_document_template(track, depth))
     _write(run_path / "final" / "user-facing-summary.md", _summary_template(run_path))
     _write(run_path / "logs" / "iteration-001.md", _iteration_template(1))
-    _write(run_path / "loop-creator.json", _json({"track": track, "label": TRACK_LABELS[track], "trigger_mode": trigger_mode, "risk_mode": risk_mode, "depth": depth, "grade": grade, "created_at": now.isoformat(timespec="seconds"), "source_skill": str(SKILL_ROOT), "gs_source": _source_status() if (track == "gs" and depth == "Full GS") else None}))
+    _write(run_path / "loop-creator.json", _json({"track": track, "label": TRACK_LABELS[track], "trigger_mode": trigger_mode, "risk_mode": risk_mode, "depth": depth, "grade": grade, "created_at": now.isoformat(timespec="seconds"), "source_skill": str(SKILL_ROOT), "gs_source": _source_status() if (track == "gs" and depth == "Full GS") else None, "control_policy": DEFAULT_CONTROL_POLICY}))
     return _json({"success": True, "path": str(run_path), "track": track, "label": TRACK_LABELS[track], "trigger_mode": trigger_mode, "risk_mode": risk_mode, "depth": depth, "grade": grade, "validation": _validate_path(run_path), "next_action": "Fill state/brief.md, state/evidence-ledger.json, and logs/iteration-001.md with real predicate evidence."})
 
 
@@ -1054,6 +1239,41 @@ def _validate_restartability_artifacts(run_path: Path) -> tuple[list[dict[str, s
         issues.append({"type": "quality_doc_gap", "path": "final/quality-document.md", "message": "quality document still contains TODO"})
     return issues, warnings
 
+def _validate_aco_control_artifacts(run_path: Path, meta: dict[str, Any]) -> tuple[list[dict[str, str]], list[dict[str, str]]]:
+    issues: list[dict[str, str]] = []
+    warnings: list[dict[str, str]] = []
+    aco_rel = "state/aco-design-card.md"
+    aco = _read(run_path / aco_rel)
+    issues.extend(_require_markers(aco, rel=aco_rel, issue_type="aco_design_gap", markers=["## A6 — Architecture", "## C3 — Control", "## O3 — Operation", "## Deletion Rule", "Structure:", "Context:", "Plan:", "Execution:", "Verification:", "Improvement:", "Hook:", "Rule:", "Loop:", "State:", "Gate:", "Evidence:"]))
+    if "TODO" in aco:
+        warnings.append({"type": "quality_warning", "path": aco_rel, "message": "ACO design card still contains TODO"})
+
+    control_rel = "state/control-policy.md"
+    control = _read(run_path / control_rel)
+    issues.extend(_require_markers(control, rel=control_rel, issue_type="control_policy_gap", markers=["## Existing Hermes Events Used", "## Event Rules", "## Non-blocking / Blocking Boundary", "## Rule Classes", "### Boundary Rules", "## Rule Deletion Criteria", "## Machine-readable Policy"]))
+    for event in HERMES_HOOK_EVENTS:
+        if f"`{event}`" not in control:
+            issues.append({"type": "control_policy_gap", "path": control_rel, "message": f"missing existing Hermes hook event: {event}"})
+    for rule in ["no_fake_evidence", "no_secret_in_artifacts", "do_not_modify_exit_criteria_to_pass", "candidate_complete_requires_evidence_ledger_update"]:
+        if rule not in control:
+            issues.append({"type": "control_policy_gap", "path": control_rel, "message": f"missing boundary rule: {rule}"})
+    if "pre_start" in control or "post_iteration" in control or "pre_completion" in control:
+        issues.append({"type": "control_policy_gap", "path": control_rel, "message": "control policy uses abstract hook names instead of existing Hermes events"})
+    if "TODO" in control:
+        warnings.append({"type": "quality_warning", "path": control_rel, "message": "control policy still contains TODO"})
+
+    cp = meta.get("control_policy") if isinstance(meta, dict) else None
+    if not isinstance(cp, dict):
+        issues.append({"type": "control_policy_gap", "path": "loop-creator.json", "message": "metadata control_policy missing"})
+    else:
+        hooks = cp.get("hooks") if isinstance(cp.get("hooks"), dict) else {}
+        event_rules = cp.get("event_rules") if isinstance(cp.get("event_rules"), dict) else {}
+        for event in ["agent:start", "agent:step", "agent:end", "session:end", "command:*"]:
+            if event not in hooks and event not in event_rules:
+                issues.append({"type": "control_policy_gap", "path": "loop-creator.json", "message": f"control_policy does not bind event: {event}"})
+    return issues, warnings
+
+
 def _validate_path(run_path: Path) -> dict[str, Any]:
     issues: list[dict[str, str]] = []
     warnings: list[dict[str, str]] = []
@@ -1064,7 +1284,7 @@ def _validate_path(run_path: Path) -> dict[str, Any]:
     depth = _normalize_depth(meta.get("depth"), track)
     grade = _normalize_grade(meta.get("grade"), track, depth)
     risk_mode = _normalize_risk_mode(meta.get("risk_mode"), track, grade)
-    required = ["state/brief.md", "state/goal-contract.md", "state/predicate-list.json", "state/evidence-ledger.json", "state/approval-gate.md", "state/story-ledger.jsonl", "state/steering-ledger.jsonl", "state/review-receipts.jsonl", "state/session-handoff.md", "state/init-check.md", "state/current.md", "state/research-notes.md", "final/improved-draft.md", "final/review-report.md", "final/quick-loop-card.md", "final/clean-state-checklist.md", "final/quality-document.md", "final/user-facing-summary.md", "final/gs-harness.md" if track == "gs" else "final/harness.md"]
+    required = ["state/brief.md", "state/goal-contract.md", "state/aco-design-card.md", "state/control-policy.md", "state/predicate-list.json", "state/evidence-ledger.json", "state/approval-gate.md", "state/story-ledger.jsonl", "state/steering-ledger.jsonl", "state/review-receipts.jsonl", "state/session-handoff.md", "state/init-check.md", "state/current.md", "state/research-notes.md", "final/improved-draft.md", "final/review-report.md", "final/quick-loop-card.md", "final/clean-state-checklist.md", "final/quality-document.md", "final/user-facing-summary.md", "final/gs-harness.md" if track == "gs" else "final/harness.md"]
     if track == "full" or depth == "Full GS":
         required.append("final/loop-spec.md")
     if track == "gs":
@@ -1072,6 +1292,9 @@ def _validate_path(run_path: Path) -> dict[str, Any]:
     for rel in required:
         if not (run_path / rel).exists():
             issues.append({"type": "scaffold_gap", "path": rel, "message": "required file missing"})
+    aco_control_issues, aco_control_warnings = _validate_aco_control_artifacts(run_path, meta)
+    issues.extend(aco_control_issues)
+    warnings.extend(aco_control_warnings)
     pred_issues, pred_warnings = _validate_predicate_list(run_path)
     issues.extend(pred_issues)
     warnings.extend(pred_warnings)
@@ -1159,10 +1382,13 @@ def _validate_path(run_path: Path) -> dict[str, Any]:
         for marker in ["challenger", "comparison", "synthesis", "92", "hard_fail_count"]:
             if marker.lower() not in text_all.lower():
                 issues.append({"type": "gs_contract_gap", "path": "final/", "message": f"Full GS missing evidence marker: {marker}"})
+    issues = _annotate_findings(issues)
+    warnings = _annotate_findings(warnings)
     by_type: dict[str, int] = {}
     for issue in issues:
         by_type[issue["type"]] = by_type.get(issue["type"], 0) + 1
-    return {"ok": not any(i["type"] == "scaffold_gap" for i in issues), "passable": len(issues) == 0, "track": track, "trigger_mode": _normalize_trigger_mode(meta.get("trigger_mode")), "risk_mode": risk_mode, "depth": depth, "grade": grade, "min_logs": min_logs, "log_count": len(logs), "issues": issues, "issue_counts": by_type, "warnings": warnings}
+    aco = _aco_summary(issues, warnings)
+    return {"ok": not any(i["type"] == "scaffold_gap" for i in issues), "passable": len(issues) == 0, "track": track, "trigger_mode": _normalize_trigger_mode(meta.get("trigger_mode")), "risk_mode": risk_mode, "depth": depth, "grade": grade, "min_logs": min_logs, "log_count": len(logs), "issues": issues, "issue_counts": by_type, "aco_bottleneck": aco.get("bottleneck"), "aco_issue_counts": aco.get("issue_counts_by_layer", {}), "aco_summary": aco, "warnings": warnings}
 
 
 def validate_run(args: dict[str, Any], **kwargs: Any) -> str:
@@ -1193,7 +1419,7 @@ def summarize_run(args: dict[str, Any], **kwargs: Any) -> str:
     if top_issues:
         first = top_issues[0]
         next_mutation = f"Fix {first['type']} in {first['path']}: {first['message']}"
-    return _json({"success": True, "path": str(run_path), "track": meta.get("track"), "trigger_mode": _normalize_trigger_mode(meta.get("trigger_mode")), "risk_mode": validation.get("risk_mode"), "depth": meta.get("depth"), "grade": validation.get("grade"), "passable": validation.get("passable", False), "issue_counts": validation.get("issue_counts", {}), "warning_count": len(validation.get("warnings", [])), "warnings": validation.get("warnings", [])[:5], "loop_trace": loop_lines, "top_blockers": top_issues, "next_mutation": next_mutation})
+    return _json({"success": True, "path": str(run_path), "track": meta.get("track"), "trigger_mode": _normalize_trigger_mode(meta.get("trigger_mode")), "risk_mode": validation.get("risk_mode"), "depth": meta.get("depth"), "grade": validation.get("grade"), "passable": validation.get("passable", False), "issue_counts": validation.get("issue_counts", {}), "aco_bottleneck": validation.get("aco_bottleneck"), "aco_issue_counts": validation.get("aco_issue_counts", {}), "warning_count": len(validation.get("warnings", [])), "warnings": validation.get("warnings", [])[:5], "loop_trace": loop_lines, "top_blockers": top_issues, "next_mutation": next_mutation})
 
 
 def check_update(args: dict[str, Any], **kwargs: Any) -> str:
@@ -1281,7 +1507,7 @@ def handle_loop_validate(raw_args: str) -> str:
         return "사용법: `/loop-validate <run-path>`"
     data = json.loads(validate_run({"path": path}))
     v = data["validation"]
-    lines = ["## loop-validate 결과", f"- path: `{data['path']}`", f"- track: `{v.get('track')}` / trigger: `{v.get('trigger_mode')}` / depth: `{v.get('depth') or 'n/a'}` / grade: `{v.get('grade')}`", f"- scaffold_ok: `{v.get('ok')}` / passable: `{v.get('passable')}`", f"- logs: `{v.get('log_count')}/{v.get('min_logs')}`", f"- issue_counts: `{v.get('issue_counts', {})}`", f"- warnings: `{len(v.get('warnings', []))}`"]
+    lines = ["## loop-validate 결과", f"- path: `{data['path']}`", f"- track: `{v.get('track')}` / trigger: `{v.get('trigger_mode')}` / depth: `{v.get('depth') or 'n/a'}` / grade: `{v.get('grade')}`", f"- scaffold_ok: `{v.get('ok')}` / passable: `{v.get('passable')}`", f"- logs: `{v.get('log_count')}/{v.get('min_logs')}`", f"- issue_counts: `{v.get('issue_counts', {})}`", f"- ACO bottleneck: `{v.get('aco_bottleneck')}`", f"- warnings: `{len(v.get('warnings', []))}`"]
     for issue in v.get("issues", [])[:8]:
         lines.append(f"- {issue['type']} @ `{issue['path']}`: {issue['message']}")
     for warning in v.get("warnings", [])[:5]:
@@ -1295,7 +1521,7 @@ def handle_loop_summary(raw_args: str) -> str:
     if not path:
         return "사용법: `/loop-summary <run-path>`"
     data = json.loads(summarize_run({"path": path}))
-    lines = ["## loop-summary", f"- path: `{data['path']}`", f"- track: `{data.get('track')}` / trigger: `{data.get('trigger_mode', 'manual')}` / depth: `{data.get('depth') or 'n/a'}`", f"- passable: `{data.get('passable')}`", f"- issue_counts: `{data.get('issue_counts')}`", f"- warnings: `{data.get('warning_count', 0)}`"]
+    lines = ["## loop-summary", f"- path: `{data['path']}`", f"- track: `{data.get('track')}` / trigger: `{data.get('trigger_mode', 'manual')}` / depth: `{data.get('depth') or 'n/a'}`", f"- passable: `{data.get('passable')}`", f"- issue_counts: `{data.get('issue_counts')}`", f"- ACO bottleneck: `{data.get('aco_bottleneck')}`", f"- warnings: `{data.get('warning_count', 0)}`"]
     for item in data.get("loop_trace", [])[:5]:
         lines.append(f"- {item['file']}: {item['goal']} → {item['result']} → {item['next']}")
     lines.append(f"👉 다음 액션: {data.get('next_mutation')}")

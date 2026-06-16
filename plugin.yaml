@@ -1,6 +1,6 @@
 name: loop-creator
-version: "1.4.0"
-description: Loop Creator plugin — route standard/full/gs loop runs, scaffold evidence files, create quick kickoff cards, preserve restartable predicate/story state, validate observed evidence and approval ledgers, summarize blockers, and check for upstream updates.
+version: "1.4.1"
+description: Loop Creator plugin — route standard/full/gs loop runs, scaffold ACO/control-policy/evidence files, create quick kickoff cards, preserve restartable predicate/story state, validate observed evidence and approval ledgers, summarize ACO blockers, and check for upstream updates.
 provides_tools:
   - loop_creator_scaffold
   - loop_creator_validate_run
