@@ -130,6 +130,7 @@ state/
   hsd.md
   brief.md
   goal-contract.md
+  failure-taxonomy.yaml
   predicate-list.json
   evidence-ledger.json
   approval-gate.md
@@ -140,6 +141,14 @@ state/
   init-check.md
   current.md
   research-notes.md
+eval/
+  eval_spec.yaml
+  task.yaml
+  rubric.yaml
+  cases.jsonl
+  latest-result.json
+runner/
+  loop.yaml
 final/
   harness.md 또는 gs-harness.md
   loop-spec.md       # full 또는 Full GS에서 생성
@@ -156,6 +165,14 @@ logs/
   iteration-001.md
 loop-creator.json
 ```
+
+## v1.5 Eval / Trace / Runner Layer
+
+- `state/evidence-ledger.json`은 v2부터 `claim`, `evidence_path`, `trace_ref`, `observed_action`, `coverage_relation`, `judge_rationale`를 가진 trace-grounded claim citation을 요구한다.
+- `state/failure-taxonomy.yaml`은 goal drift, context contamination, plugin/MCP abuse, permission escalation, repeated no-progress, HITL bypass를 포함한 failure taxonomy v2를 둔다.
+- `eval/` pack은 acceptance criteria를 deterministic checks, judge checks, safety checks, cases, latest result로 분리한다.
+- `loop-creator.json`은 `model_id`, `harness_id`, `grader_id`, `fit_score`, `runner_spec`을 기록해 model × harness × grader를 섞지 않는다.
+- `runner/loop.yaml`은 runner-neutral planning metadata다. 설치나 실행 증거가 아니다.
 
 ## Goal Contract
 

@@ -4,7 +4,7 @@ LOOP_CREATOR_SCAFFOLD = {
     "name": "loop_creator_scaffold",
     "description": (
         "Create a Loop Creator run scaffold. Use when the user wants loop-creator, "
-        "standard loop, full loop, or gs loop scaffolding with required evidence files. "
+        "standard loop, full loop, or gs loop scaffolding with required evidence, eval, failure-taxonomy, and runner-neutral spec files. "
         "This does not execute autonomous loops; it creates the run package and templates."
     ),
     "parameters": {

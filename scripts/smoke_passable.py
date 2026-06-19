@@ -234,6 +234,16 @@ def _fill_restartability_artifacts(run: pathlib.Path) -> None:
                         "summary": "final_validation passable true with zero issue counts and zero warnings",
                     }
                 ],
+                "claims": [
+                    {
+                        "claim": "candidate_complete after smoke validator returned passable true",
+                        "evidence_path": "scripts/smoke_passable.py final_validation output",
+                        "trace_ref": "logs/iteration-005.md#Evidence Update",
+                        "observed_action": "tools.validate_run returned passable true during smoke script",
+                        "coverage_relation": "generic",
+                        "judge_rationale": "The smoke script reads validator output and asserts zero issue counts before candidate completion.",
+                    }
+                ],
                 "coverage_relation": "generic",
                 "latest_artifact_hash": "sample-draft-v1-local-fixture",
                 "latest_verified_at": "2026-06-16T00:00:00+09:00",
@@ -420,6 +430,66 @@ Quality snapshot for the generated loop run. Update after material iteration bat
         encoding="utf-8",
     )
 
+def _fill_eval_pack(run: pathlib.Path) -> None:
+    (run / "eval" / "eval_spec.yaml").write_text(
+        """{
+  "schema": "loop-creator-eval-spec-v1",
+  "goal_id": "filled-run-smoke",
+  "artifact": "sample draft v1",
+  "track": "standard",
+  "depth": "n/a",
+  "risk_mode": "normal",
+  "behavior_categories": ["completion", "safety", "robustness"],
+  "acceptance_criteria": ["final validation passable true with zero issue counts and zero warnings"],
+  "deterministic_checks": ["python3 scripts/smoke_passable.py"],
+  "judge_checks": ["review-report cites loop trace summary and smoke evidence"],
+  "safety_checks": ["no_fake_evidence", "no_secret_in_artifacts", "do_not_modify_exit_criteria_to_pass"],
+  "evidence_required": ["evidence_path", "trace_ref", "observed_action", "coverage_relation"],
+  "pass_policy": "pass_once",
+  "grader_id": "mixed"
+}
+""",
+        encoding="utf-8",
+    )
+    (run / "eval" / "cases.jsonl").write_text(
+        json.dumps(
+            {
+                "case_id": "case-001",
+                "source": "acceptance_criteria",
+                "input": "filled-run-smoke local fixture",
+                "expected": "validator passable true with zero issue counts and zero warnings",
+                "checks": ["eval/rubric.yaml", "tools.validate_run"],
+                "trace_required": True,
+            },
+            ensure_ascii=False,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (run / "eval" / "latest-result.json").write_text(
+        json.dumps(
+            {
+                "schema": "loop-creator-eval-result-v1",
+                "status": "pass",
+                "pass_policy": "pass_once",
+                "trials": [
+                    {
+                        "trial_id": "trial-001",
+                        "verdict": "pass",
+                        "evidence_path": "scripts/smoke_passable.py final_validation output",
+                        "trace_ref": "logs/iteration-005.md#Evidence Update",
+                    }
+                ],
+                "summary": "Observed local smoke validator pass after concrete trace and evidence fields were filled.",
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+
 def main() -> int:
     root = tempfile.mkdtemp(prefix="loop-creator-smoke-")
     run = _create_run(root)
@@ -435,6 +505,7 @@ def main() -> int:
     _fill_iteration_logs(run, low_quality=True)
     _fill_review(run)
     _fill_restartability_artifacts(run)
+    _fill_eval_pack(run)
 
     low_quality_validation = json.loads(tools.validate_run({"path": str(run)}))["validation"]
     assert low_quality_validation["passable"] is True, low_quality_validation

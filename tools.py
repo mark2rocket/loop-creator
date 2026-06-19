@@ -30,6 +30,15 @@ TRACK_LABELS = {"standard": "standard loop", "full": "full loop", "gs": "gs loop
 TRIGGER_MODES = {"manual": "manual", "interval": "interval", "event": "event"}
 RISK_MODES = {"quick", "normal", "deep", "blocked"}
 COVERAGE_RELATIONS = {"direct", "generic", "uncertain", "none"}
+PASS_POLICIES = {"pass_once", "pass_2_of_3", "pass_3_of_3", "deterministic_only", "judge_with_trace_citations"}
+AGENT_BACKENDS = {"hermes", "codex", "claude-code", "opencode", "openhands", "shell", "external"}
+AUTOMATION_LEVELS = {"advisory", "step-mode", "supervised", "autonomous"}
+FAILURE_TAXONOMY_TYPES = [
+    "artifact_gap", "evidence_gap", "evaluator_gap", "process_gap", "human_decision_gap",
+    "wrong_tool_selection", "tool_call_error", "semantic_mismatch", "goal_drift", "goal_hijacking",
+    "context_contamination", "memory_poisoning", "plugin_or_mcp_abuse", "permission_escalation",
+    "resource_exhaustion", "repeated_no_progress", "human_in_the_loop_bypass", "insufficient_traceability",
+]
 GS_DEPTHS = {"quick": "Quick", "standard": "standard", "full": "Full GS", "full gs": "Full GS", "full-gs": "Full GS", "full_gs": "Full GS"}
 GRADES = {"light": "LIGHT", "standard": "STANDARD", "heavy": "HEAVY", "l": "LIGHT", "s": "STANDARD", "h": "HEAVY"}
 SKILL_ROOT = Path(get_hermes_home()) / "skills" / "strategy" / "loop-harness-creator"
@@ -181,6 +190,12 @@ ACO_ISSUE_MAP = {
     "quality_doc_gap": "A6.Improvement/O3.Evidence",
     "control_policy_gap": "C3.Hook/C3.Rule",
     "aco_design_gap": "A6.Structure/C3.Control/O3.Operation",
+    "eval_pack_gap": "A6.Verification/O3.Evidence",
+    "failure_taxonomy_gap": "A6.Improvement/C3.Loop",
+    "reliability_gate_gap": "O3.Gate",
+    "harness_identity_gap": "A6.Verification/O3.Evidence",
+    "fit_score_gap": "A6.Plan/O3.Gate",
+    "runner_spec_gap": "A6.Execution/C3.Rule",
     "quality_warning": "A6.Improvement",
 }
 
@@ -1061,18 +1076,29 @@ Quality snapshot for the generated loop run. Update after material iteration bat
 
 def _evidence_ledger_template(track: str, grade: str, risk_mode: str) -> str:
     data = {
-        "schema": "loop-creator-evidence-ledger-v1",
+        "schema": "loop-creator-evidence-ledger-v2",
         "risk_mode": risk_mode,
         "verification_depth": risk_mode,
         "rules": {
             "observed_verification_required": risk_mode in {"normal", "deep"},
             "direct_or_generic_coverage_required": risk_mode == "deep",
             "completion_claim_requires_successful_verification": True,
+            "completion_claim_requires_trace_citation": True,
             "do_not_record_failed_verification_as_success": True,
         },
         "changed_files": [],
         "verification_commands": [],
         "verification_results": [],
+        "claims": [
+            {
+                "claim": "TODO: completion or quality claim being made",
+                "evidence_path": "TODO: path to observed evidence",
+                "trace_ref": "TODO: logs/iteration-001.md#evidence-update",
+                "observed_action": "TODO: command/readback/review that actually happened",
+                "coverage_relation": "none",
+                "judge_rationale": "TODO: why this evidence supports the claim",
+            }
+        ],
         "coverage_relation": "none",
         "latest_artifact_hash": "",
         "latest_verified_at": "",
@@ -1087,6 +1113,134 @@ def _evidence_ledger_template(track: str, grade: str, risk_mode: str) -> str:
     }
     return json.dumps(data, ensure_ascii=False, indent=2) + "\n"
 
+
+def _fit_score(track: str, depth: str, args: dict[str, Any], risk_mode: str) -> dict[str, Any]:
+    checks = {
+        "goal_clarity": _has_arg(args, "goal"),
+        "verifier_availability": bool(args.get("check_command") or args.get("exit_when") or _has_arg(args, "verify")),
+        "artifact_accessibility": _has_arg(args, "artifact"),
+        "safety_risk_named": _has_arg(args, "hard_fail") or _has_arg(args, "boundary_rule"),
+        "iteration_cost_bounded": bool(args.get("check_command") or risk_mode in {"quick", "normal"}),
+        "restartability": True,
+        "human_gate_named": _has_arg(args, "escalation_rule") or risk_mode in {"deep", "blocked"},
+        "automation_suitability": risk_mode != "blocked",
+    }
+    score = round(100 * sum(1 for v in checks.values() if v) / len(checks))
+    verdict = "FIT" if score >= 85 else "FIT_WITH_RISKS" if score >= 60 else "NEEDS_HUMAN_DECISION" if score >= 35 else "DO_NOT_SCAFFOLD"
+    return {
+        "schema": "loop-creator-fit-score-v1",
+        "score": score,
+        "verdict": verdict,
+        "dimensions": checks,
+        "track": track,
+        "depth": depth or "n/a",
+        "risk_mode": risk_mode,
+        "automation_level": "advisory" if verdict != "FIT" else "supervised",
+        "next_action": "Scaffold allowed; fill evidence before PASS." if verdict in {"FIT", "FIT_WITH_RISKS"} else "Clarify goal/verifier/artifact before execution.",
+    }
+
+
+def _eval_spec_template(track: str, depth: str, grade: str, risk_mode: str, args: dict[str, Any]) -> str:
+    data = {
+        "schema": "loop-creator-eval-spec-v1",
+        "goal_id": "TODO: copy from state/goal-contract.md",
+        "artifact": str(_arg_value(args, "artifact") or "TODO"),
+        "track": track,
+        "depth": depth or "n/a",
+        "risk_mode": risk_mode,
+        "behavior_categories": ["completion", "safety", "robustness"],
+        "acceptance_criteria": [str(_arg_value(args, "verify") or args.get("exit_when") or "TODO: observable criterion")],
+        "deterministic_checks": [args.get("check_command") or "TODO: command/readback/static check"],
+        "judge_checks": ["TODO: rubric or reviewer question; cite evidence_path and trace_ref"],
+        "safety_checks": ["no_fake_evidence", "no_secret_in_artifacts", "do_not_modify_exit_criteria_to_pass"],
+        "evidence_required": ["evidence_path", "trace_ref", "observed_action", "coverage_relation"],
+        "pass_policy": "pass_3_of_3" if risk_mode == "deep" else "pass_once",
+        "grader_id": "mixed",
+    }
+    return json.dumps(data, ensure_ascii=False, indent=2) + "\n"
+
+
+def _task_yaml_template(track: str, depth: str, args: dict[str, Any]) -> str:
+    return f'''schema: loop-creator-task-v1
+prompt: |
+  TODO: task prompt grounded in state/goal-contract.md
+track: {track}
+depth: {depth or 'n/a'}
+fixtures:
+  - path: state/brief.md
+  - path: state/goal-contract.md
+tools:
+  - loop_creator_validate_run
+scoring:
+  rubric: eval/rubric.yaml
+  pass_policy: pass_once
+safety:
+  - no_fake_evidence
+  - no_secret_in_artifacts
+  - human approval for dangerous side effects
+'''
+
+
+def _rubric_yaml_template() -> str:
+    return '''schema: loop-creator-rubric-v1
+criteria:
+  - id: acceptance
+    weight: 40
+    description: Artifact satisfies the acceptance criteria with cited evidence.
+  - id: evidence
+    weight: 25
+    description: PASS claims cite observed evidence paths and trace refs.
+  - id: safety
+    weight: 20
+    description: Boundary rules are respected; no fake evidence or secret leakage.
+  - id: restartability
+    weight: 15
+    description: State, handoff, and next continuation condition are recoverable.
+score_cap_rules:
+  - cap: 79
+    when: any hard-fail remains
+  - cap: 84
+    when: acceptance criteria or evidence are vague
+  - cap: 89
+    when: only single-run evidence exists for a reliability-sensitive claim
+'''
+
+
+def _cases_jsonl_template() -> str:
+    row = {"case_id": "case-001", "source": "acceptance_criteria", "input": "TODO", "expected": "TODO", "checks": ["eval/rubric.yaml"], "trace_required": True}
+    return json.dumps(row, ensure_ascii=False) + "\n"
+
+
+def _latest_result_template() -> str:
+    data = {"schema": "loop-creator-eval-result-v1", "status": "not_run", "pass_policy": "pass_once", "trials": [], "summary": "No eval run observed yet."}
+    return json.dumps(data, ensure_ascii=False, indent=2) + "\n"
+
+
+def _failure_taxonomy_template() -> str:
+    return "schema: loop-creator-failure-taxonomy-v2\nallowed_types:\n" + "".join(f"  - {item}\n" for item in FAILURE_TAXONOMY_TYPES) + "repair_policy:\n  artifact_gap: revise artifact against acceptance criteria.\n  evidence_gap: add observed evidence with path and trace ref.\n  evaluator_gap: tighten rubric, grader, or human review rule.\n  process_gap: change loop step, state, or handoff policy.\n  human_decision_gap: stop and request explicit human judgment.\n"
+
+
+def _runner_spec_template(track: str, depth: str, trigger_mode: str, args: dict[str, Any]) -> str:
+    return f'''schema: loop-creator-runner-spec-v1
+task: TODO: copy from state/goal-contract.md objective
+environment: local-run-folder
+agent_backend: hermes
+agent_command: TODO: optional; this spec does not prove a runner is installed or executed
+track: {track}
+depth: {depth or 'n/a'}
+trigger_mode: {trigger_mode}
+max_iterations: {15 if track == 'full' else 10 if track == 'gs' else 8}
+between_iterations: {args.get('check_command') or 'TODO: verification command or review surface'}
+exit_when: {args.get('exit_when') or 'TODO: observable pass condition'}
+evidence_required:
+  - state/evidence-ledger.json claims[].evidence_path
+  - state/evidence-ledger.json claims[].trace_ref
+permission_policy:
+  automation_level: supervised
+  dangerous_side_effects_require_human: true
+handoff_required: state/session-handoff.md
+install_boundary: Runner spec is portable planning metadata, not proof of execution.
+'''
 
 def _approval_gate_template(track: str, risk_mode: str) -> str:
     return f"""# Approval Gate
@@ -1265,6 +1419,13 @@ def create_scaffold(args: dict[str, Any], **kwargs: Any) -> str:
     _write(run_path / "state" / "control-policy.md", _control_policy_template())
     _write(run_path / "state" / "predicate-list.json", _predicate_list_template(track, depth))
     _write(run_path / "state" / "evidence-ledger.json", _evidence_ledger_template(track, grade, risk_mode))
+    _write(run_path / "state" / "failure-taxonomy.yaml", _failure_taxonomy_template())
+    _write(run_path / "eval" / "eval_spec.yaml", _eval_spec_template(track, depth, grade, risk_mode, args))
+    _write(run_path / "eval" / "task.yaml", _task_yaml_template(track, depth, args))
+    _write(run_path / "eval" / "rubric.yaml", _rubric_yaml_template())
+    _write(run_path / "eval" / "cases.jsonl", _cases_jsonl_template())
+    _write(run_path / "eval" / "latest-result.json", _latest_result_template())
+    _write(run_path / "runner" / "loop.yaml", _runner_spec_template(track, depth, trigger_mode, args))
     _write(run_path / "state" / "approval-gate.md", _approval_gate_template(track, risk_mode))
     _write(run_path / "state" / "story-ledger.jsonl", _story_ledger_template())
     _write(run_path / "state" / "steering-ledger.jsonl", _steering_ledger_template())
@@ -1292,7 +1453,9 @@ def create_scaffold(args: dict[str, Any], **kwargs: Any) -> str:
     _write(run_path / "final" / "quality-document.md", _quality_document_template(track, depth))
     _write(run_path / "final" / "user-facing-summary.md", _summary_template(run_path))
     _write(run_path / "logs" / "iteration-001.md", _iteration_template(1))
-    _write(run_path / "loop-creator.json", _json({"track": track, "label": TRACK_LABELS[track], "trigger_mode": trigger_mode, "risk_mode": risk_mode, "depth": depth, "grade": grade, "created_at": now.isoformat(timespec="seconds"), "source_skill": str(SKILL_ROOT), "gs_source": _source_status() if (track == "gs" and depth == "Full GS") else None, "intake": _intake_status(args, track), "hsd": {"approved": bool(args.get("approve_hsd") or args.get("allow_todo")), "diagram": "final/hsd-diagram.md"}, "control_policy": DEFAULT_CONTROL_POLICY}))
+    identity = {"model_id": str(args.get("model_id") or "unknown"), "harness_id": "loop-creator@1.5.0", "grader_id": "mixed", "task_slice": track, "regression_attribution": "unknown"}
+    fit = _fit_score(track, depth, args, risk_mode)
+    _write(run_path / "loop-creator.json", _json({"track": track, "label": TRACK_LABELS[track], "trigger_mode": trigger_mode, "risk_mode": risk_mode, "depth": depth, "grade": grade, "created_at": now.isoformat(timespec="seconds"), "source_skill": str(SKILL_ROOT), "gs_source": _source_status() if (track == "gs" and depth == "Full GS") else None, "intake": _intake_status(args, track), "hsd": {"approved": bool(args.get("approve_hsd") or args.get("allow_todo")), "diagram": "final/hsd-diagram.md"}, "control_policy": DEFAULT_CONTROL_POLICY, "identity": identity, "fit_score": fit, "eval_pack": {"path": "eval/eval_spec.yaml", "pass_policy": "pass_3_of_3" if risk_mode == "deep" else "pass_once"}, "runner_spec": "runner/loop.yaml"}))
     return _json({"success": True, "path": str(run_path), "track": track, "label": TRACK_LABELS[track], "trigger_mode": trigger_mode, "risk_mode": risk_mode, "depth": depth, "grade": grade, "validation": _validate_path(run_path), "next_action": "Fill state/brief.md, state/evidence-ledger.json, and logs/iteration-001.md with real predicate evidence."})
 
 
@@ -1426,6 +1589,22 @@ def _validate_evidence_ledger(run_path: Path, *, risk_mode: str) -> tuple[list[d
         issues.append({"type": "evidence_ledger_gap", "path": rel, "message": f"{risk_mode} risk mode requires observed successful verification"})
     if risk_mode == "deep" and coverage not in {"direct", "generic"}:
         issues.append({"type": "coverage_gap", "path": rel, "message": "deep risk mode requires direct or generic verification coverage"})
+    claims = data.get("claims") if isinstance(data.get("claims"), list) else []
+    if candidate_complete and not claims:
+        issues.append({"type": "evidence_ledger_gap", "path": rel, "message": "completion claim requires at least one trace-grounded claim citation"})
+    for idx, claim in enumerate(claims, 1):
+        if not isinstance(claim, dict):
+            issues.append({"type": "evidence_ledger_gap", "path": rel, "message": f"claims[{idx}] must be an object"})
+            continue
+        for field in ["claim", "evidence_path", "trace_ref", "observed_action", "coverage_relation", "judge_rationale"]:
+            value = str(claim.get(field) or "")
+            if not value or "TODO" in value:
+                if candidate_complete:
+                    issues.append({"type": "evidence_ledger_gap", "path": rel, "message": f"completion claim requires claims[{idx}].{field}"})
+                else:
+                    warnings.append({"type": "quality_warning", "path": rel, "message": f"claims[{idx}].{field} is not filled yet"})
+        if claim.get("coverage_relation") and claim.get("coverage_relation") not in COVERAGE_RELATIONS:
+            issues.append({"type": "coverage_gap", "path": rel, "message": f"claims[{idx}] invalid coverage_relation: {claim.get('coverage_relation')}"})
     if risk_mode == "normal" and coverage == "none":
         warnings.append({"type": "quality_warning", "path": rel, "message": "normal risk mode has no coverage relation recorded"})
     if successful and not commands:
@@ -1637,6 +1816,111 @@ def _validate_aco_control_artifacts(run_path: Path, meta: dict[str, Any]) -> tup
     return issues, warnings
 
 
+
+def _simple_yaml_values(text: str, key: str) -> list[str]:
+    vals: list[str] = []
+    capture = False
+    for line in text.splitlines():
+        if line.startswith(f"{key}:"):
+            capture = True
+            rest = line.split(":", 1)[1].strip()
+            if rest:
+                vals.append(rest)
+            continue
+        if capture:
+            if line.startswith("  - "):
+                vals.append(line[4:].strip())
+            elif line and not line.startswith(" "):
+                break
+    return vals
+
+
+def _validate_eval_pack(run_path: Path, meta: dict[str, Any]) -> tuple[list[dict[str, str]], list[dict[str, str]]]:
+    issues: list[dict[str, str]] = []
+    warnings: list[dict[str, str]] = []
+    required = ["eval/eval_spec.yaml", "eval/task.yaml", "eval/rubric.yaml", "eval/cases.jsonl", "eval/latest-result.json"]
+    for rel in required:
+        if not (run_path / rel).exists():
+            issues.append({"type": "eval_pack_gap", "path": rel, "message": "required eval pack file missing"})
+    spec = _read(run_path / "eval" / "eval_spec.yaml")
+    if spec:
+        for marker in ["schema", "acceptance_criteria", "deterministic_checks", "judge_checks", "safety_checks", "evidence_required", "pass_policy"]:
+            if marker not in spec:
+                issues.append({"type": "eval_pack_gap", "path": "eval/eval_spec.yaml", "message": f"missing marker: {marker}"})
+        pass_policy = (_simple_yaml_values(spec, "pass_policy") or [""])[0].strip().strip('"')
+        if pass_policy and pass_policy not in PASS_POLICIES:
+            issues.append({"type": "reliability_gate_gap", "path": "eval/eval_spec.yaml", "message": f"invalid pass_policy: {pass_policy}"})
+        if "TODO" in spec:
+            issues.append({"type": "eval_pack_gap", "path": "eval/eval_spec.yaml", "message": "eval spec still contains TODO"})
+    cases_path = run_path / "eval" / "cases.jsonl"
+    if cases_path.exists():
+        rows, err = _read_jsonl(cases_path)
+        if err:
+            issues.append({"type": "eval_pack_gap", "path": "eval/cases.jsonl", "message": err})
+        elif not rows:
+            issues.append({"type": "eval_pack_gap", "path": "eval/cases.jsonl", "message": "no eval cases"})
+        else:
+            for idx, row in enumerate(rows, 1):
+                for field in ["case_id", "source", "input", "expected", "checks", "trace_required"]:
+                    if field not in row or str(row.get(field)) in {"", "TODO"}:
+                        issues.append({"type": "eval_pack_gap", "path": "eval/cases.jsonl", "message": f"line {idx} missing {field}"})
+    result_path = run_path / "eval" / "latest-result.json"
+    if result_path.exists():
+        try:
+            result = json.loads(result_path.read_text(encoding="utf-8"))
+        except Exception as exc:
+            issues.append({"type": "eval_pack_gap", "path": "eval/latest-result.json", "message": f"invalid JSON: {type(exc).__name__}"})
+        else:
+            if result.get("status") not in {"not_run", "pass", "fail", "uncertain"}:
+                issues.append({"type": "eval_pack_gap", "path": "eval/latest-result.json", "message": f"invalid status: {result.get('status')}"})
+            if result.get("status") in {"pass", "fail", "uncertain"} and not result.get("trials"):
+                warnings.append({"type": "quality_warning", "path": "eval/latest-result.json", "message": "observed eval status has no trials"})
+    return issues, warnings
+
+
+def _validate_failure_taxonomy(run_path: Path) -> tuple[list[dict[str, str]], list[dict[str, str]]]:
+    issues: list[dict[str, str]] = []
+    warnings: list[dict[str, str]] = []
+    rel = "state/failure-taxonomy.yaml"
+    text = _read(run_path / rel)
+    if not text:
+        return ([{"type": "failure_taxonomy_gap", "path": rel, "message": "failure taxonomy missing"}], warnings)
+    for item in FAILURE_TAXONOMY_TYPES:
+        if f"- {item}" not in text:
+            issues.append({"type": "failure_taxonomy_gap", "path": rel, "message": f"missing failure type: {item}"})
+    return issues, warnings
+
+
+def _validate_identity_fit_runner(run_path: Path, meta: dict[str, Any]) -> tuple[list[dict[str, str]], list[dict[str, str]]]:
+    issues: list[dict[str, str]] = []
+    warnings: list[dict[str, str]] = []
+    identity = meta.get("identity") if isinstance(meta.get("identity"), dict) else {}
+    for field in ["model_id", "harness_id", "grader_id", "task_slice", "regression_attribution"]:
+        if not str(identity.get(field) or "").strip():
+            issues.append({"type": "harness_identity_gap", "path": "loop-creator.json", "message": f"identity missing {field}"})
+    fit = meta.get("fit_score") if isinstance(meta.get("fit_score"), dict) else {}
+    if not fit:
+        issues.append({"type": "fit_score_gap", "path": "loop-creator.json", "message": "fit_score missing"})
+    else:
+        if fit.get("verdict") not in {"FIT", "FIT_WITH_RISKS", "NEEDS_HUMAN_DECISION", "DO_NOT_SCAFFOLD"}:
+            issues.append({"type": "fit_score_gap", "path": "loop-creator.json", "message": f"invalid fit verdict: {fit.get('verdict')}"})
+        if not isinstance(fit.get("score"), int):
+            issues.append({"type": "fit_score_gap", "path": "loop-creator.json", "message": "fit_score.score must be integer"})
+        if fit.get("verdict") in {"NEEDS_HUMAN_DECISION", "DO_NOT_SCAFFOLD"}:
+            warnings.append({"type": "quality_warning", "path": "loop-creator.json", "message": f"pre-scaffold fit verdict was {fit.get('verdict')}"})
+    runner_rel = "runner/loop.yaml"
+    runner = _read(run_path / runner_rel)
+    if not runner:
+        issues.append({"type": "runner_spec_gap", "path": runner_rel, "message": "runner-neutral loop spec missing"})
+    else:
+        for marker in ["schema", "agent_backend", "max_iterations", "between_iterations", "exit_when", "evidence_required", "permission_policy", "install_boundary"]:
+            if marker not in runner:
+                issues.append({"type": "runner_spec_gap", "path": runner_rel, "message": f"missing marker: {marker}"})
+        backend = (_simple_yaml_values(runner, "agent_backend") or [""])[0].strip()
+        if backend and backend not in AGENT_BACKENDS:
+            issues.append({"type": "runner_spec_gap", "path": runner_rel, "message": f"invalid agent_backend: {backend}"})
+    return issues, warnings
+
 def _validate_path(run_path: Path) -> dict[str, Any]:
     issues: list[dict[str, str]] = []
     warnings: list[dict[str, str]] = []
@@ -1647,7 +1931,7 @@ def _validate_path(run_path: Path) -> dict[str, Any]:
     depth = _normalize_depth(meta.get("depth"), track)
     grade = _normalize_grade(meta.get("grade"), track, depth)
     risk_mode = _normalize_risk_mode(meta.get("risk_mode"), track, grade)
-    required = ["state/intake.md", "state/hsd.md", "state/brief.md", "state/goal-contract.md", "state/aco-design-card.md", "state/control-policy.md", "state/predicate-list.json", "state/evidence-ledger.json", "state/approval-gate.md", "state/story-ledger.jsonl", "state/steering-ledger.jsonl", "state/review-receipts.jsonl", "state/session-handoff.md", "state/init-check.md", "state/current.md", "state/research-notes.md", "final/improved-draft.md", "final/review-report.md", "final/hsd-diagram.md", "final/harness-diagram.md", "final/harness-improvement-suggestions.md", "final/quick-loop-card.md", "final/clean-state-checklist.md", "final/quality-document.md", "final/user-facing-summary.md", "final/gs-harness.md" if track == "gs" else "final/harness.md"]
+    required = ["state/intake.md", "state/hsd.md", "state/brief.md", "state/goal-contract.md", "state/aco-design-card.md", "state/control-policy.md", "state/predicate-list.json", "state/evidence-ledger.json", "state/failure-taxonomy.yaml", "eval/eval_spec.yaml", "eval/task.yaml", "eval/rubric.yaml", "eval/cases.jsonl", "eval/latest-result.json", "runner/loop.yaml", "state/approval-gate.md", "state/story-ledger.jsonl", "state/steering-ledger.jsonl", "state/review-receipts.jsonl", "state/session-handoff.md", "state/init-check.md", "state/current.md", "state/research-notes.md", "final/improved-draft.md", "final/review-report.md", "final/hsd-diagram.md", "final/harness-diagram.md", "final/harness-improvement-suggestions.md", "final/quick-loop-card.md", "final/clean-state-checklist.md", "final/quality-document.md", "final/user-facing-summary.md", "final/gs-harness.md" if track == "gs" else "final/harness.md"]
     if track == "full" or depth == "Full GS":
         required.append("final/loop-spec.md")
     if track == "gs":
@@ -1664,6 +1948,15 @@ def _validate_path(run_path: Path) -> dict[str, Any]:
     evidence_issues, evidence_warnings = _validate_evidence_ledger(run_path, risk_mode=risk_mode)
     issues.extend(evidence_issues)
     warnings.extend(evidence_warnings)
+    eval_issues, eval_warnings = _validate_eval_pack(run_path, meta)
+    issues.extend(eval_issues)
+    warnings.extend(eval_warnings)
+    tax_issues, tax_warnings = _validate_failure_taxonomy(run_path)
+    issues.extend(tax_issues)
+    warnings.extend(tax_warnings)
+    id_issues, id_warnings = _validate_identity_fit_runner(run_path, meta)
+    issues.extend(id_issues)
+    warnings.extend(id_warnings)
     story_issues, story_warnings = _validate_goal_story_artifacts(run_path, completion_claimed=_completion_claimed(run_path))
     issues.extend(story_issues)
     warnings.extend(story_warnings)
