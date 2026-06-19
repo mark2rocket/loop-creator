@@ -1,0 +1,19 @@
+schema: loop-creator-failure-taxonomy-v2
+allowed_types:
+  - artifact_gap
+  - evidence_gap
+  - evaluator_gap
+  - process_gap
+  - human_decision_gap
+  - goal_drift
+  - context_contamination
+  - plugin_or_mcp_abuse
+  - permission_escalation
+  - repeated_no_progress
+  - insufficient_traceability
+repair_policy:
+  artifact_gap: revise the artifact against the goal contract.
+  evidence_gap: add observed evidence with path and trace ref.
+  evaluator_gap: tighten rubric, grader, or human review question.
+  process_gap: change loop step, state, or handoff policy.
+  human_decision_gap: stop and request explicit human judgment.

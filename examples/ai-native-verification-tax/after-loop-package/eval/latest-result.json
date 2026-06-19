@@ -1,0 +1,7 @@
+{
+  "schema": "loop-creator-eval-result-v1",
+  "status": "not_run",
+  "pass_policy": "pass_once",
+  "trials": [],
+  "summary": "Example fixture only. Run a real review before claiming pass."
+}

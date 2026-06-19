@@ -1,0 +1,1 @@
+{"case_id":"case-001","source":"acceptance_criteria","input":"AI-native consulting proposal draft","expected":"buyer outcome, verification layer, risks, and next decision are explicit","checks":["eval/eval_spec.yaml"],"trace_required":true}

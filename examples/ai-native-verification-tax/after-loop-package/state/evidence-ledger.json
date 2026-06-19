@@ -1,0 +1,40 @@
+{
+  "schema": "loop-creator-evidence-ledger-v2",
+  "risk_mode": "normal",
+  "verification_depth": "normal",
+  "rules": {
+    "observed_verification_required": true,
+    "completion_claim_requires_successful_verification": true,
+    "completion_claim_requires_trace_citation": true,
+    "do_not_record_failed_verification_as_success": true
+  },
+  "changed_files": [
+    "state/goal-contract.md",
+    "eval/eval_spec.yaml",
+    "final/user-facing-summary.md"
+  ],
+  "verification_commands": [],
+  "verification_results": [],
+  "claims": [
+    {
+      "claim": "The example package makes the verification surface explicit.",
+      "evidence_path": "eval/eval_spec.yaml",
+      "trace_ref": "examples/ai-native-verification-tax/README.md#after",
+      "observed_action": "Read the eval spec and confirmed deterministic, judge, and safety checks are separated.",
+      "coverage_relation": "direct",
+      "judge_rationale": "The eval spec lists acceptance criteria, deterministic checks, judge checks, safety checks, and pass policy."
+    }
+  ],
+  "coverage_relation": "direct",
+  "latest_artifact_hash": "example-static-fixture",
+  "latest_verified_at": "2026-06-19T00:00:00+09:00",
+  "completion_claims": [
+    "The example package makes the verification surface explicit."
+  ],
+  "failures": [],
+  "stop_gate": {
+    "candidate_complete_claimed": false,
+    "successful_verification_observed": false,
+    "blocked_reason": "Example fixture only; no live buyer review recorded."
+  }
+}
