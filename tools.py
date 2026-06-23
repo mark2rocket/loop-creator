@@ -27,15 +27,12 @@ except Exception:  # pragma: no cover
         return str(Path.home() / ".hermes")
 
 TRACK_LABELS = {"standard": "standard loop", "full": "full loop", "gs": "gs loop"}
-TRIGGER_MODES = {"manual": "manual", "interval": "interval", "event": "event"}
-RISK_MODES = {"quick", "normal", "deep", "blocked"}
 COVERAGE_RELATIONS = {"direct", "generic", "uncertain", "none"}
 PASS_POLICIES = {"pass_once", "pass_2_of_3", "pass_3_of_3", "deterministic_only", "judge_with_trace_citations"}
 PUBLISHED_STATUSES = {"draft", "local", "validated", "published", "retired"}
 NEXT_ACTION_GATES = {"GO", "HOLD", "CAP", "BLOCK"}
 LOOP_AUDIT_STATUSES = {"INSUFFICIENT_EVIDENCE", "KEEP", "PIVOT", "RETIRE", "KILL"}
 AGENT_BACKENDS = {"hermes", "codex", "claude-code", "opencode", "openhands", "shell", "external"}
-AUTOMATION_LEVELS = {"advisory", "step-mode", "supervised", "autonomous"}
 FAILURE_TAXONOMY_TYPES = [
     "artifact_gap", "evidence_gap", "evaluator_gap", "process_gap", "human_decision_gap",
     "wrong_tool_selection", "tool_call_error", "semantic_mismatch", "goal_drift", "goal_hijacking",
@@ -1668,9 +1665,9 @@ def create_scaffold(args: dict[str, Any], **kwargs: Any) -> str:
     _write(run_path / "final" / "quality-document.md", _quality_document_template(track, depth))
     _write(run_path / "final" / "user-facing-summary.md", _summary_template(run_path))
     _write(run_path / "logs" / "iteration-001.md", _iteration_template(1))
-    identity = {"model_id": str(args.get("model_id") or "unknown"), "harness_id": "loop-creator@1.5.1", "grader_id": "mixed", "task_slice": track, "regression_attribution": "unknown"}
+    identity = {"model_id": str(args.get("model_id") or "unknown"), "harness_id": "loop-creator@1.6.0", "grader_id": "mixed", "task_slice": track, "regression_attribution": "unknown"}
     fit = _fit_score(track, depth, args, risk_mode)
-    _write(run_path / "loop-creator.json", _json({"track": track, "label": TRACK_LABELS[track], "trigger_mode": trigger_mode, "risk_mode": risk_mode, "depth": depth, "grade": grade, "created_at": now.isoformat(timespec="seconds"), "source_skill": str(SKILL_ROOT), "gs_source": _source_status() if (track == "gs" and depth == "Full GS") else None, "intake": _intake_status(args, track), "hsd": {"approved": bool(args.get("approve_hsd") or args.get("allow_todo")), "diagram": "final/hsd-diagram.md"}, "control_policy": DEFAULT_CONTROL_POLICY, "identity": identity, "fit_score": fit, "eval_pack": {"path": "eval/eval_spec.yaml", "pass_policy": "pass_3_of_3" if risk_mode == "deep" else "pass_once"}, "runner_spec": "runner/loop.yaml", "loop_record": "final/loop-record.json", "published_status": "draft"}))
+    _write(run_path / "loop-creator.json", _json({"track": track, "label": TRACK_LABELS[track], "trigger_mode": trigger_mode, "risk_mode": risk_mode, "depth": depth, "grade": grade, "created_at": now.isoformat(timespec="seconds"), "source_skill": str(SKILL_ROOT), "gs_source": _source_status() if (track == "gs" and depth == "Full GS") else None, "intake": _intake_status(args, track), "hsd": {"approved": bool(args.get("approve_hsd") or args.get("allow_todo")), "diagram": "final/hsd-diagram.md"}, "control_policy": DEFAULT_CONTROL_POLICY, "identity": identity, "fit_score": fit, "eval_pack": {"path": "eval/eval_spec.yaml", "pass_policy": "pass_3_of_3" if risk_mode == "deep" else "pass_once"}, "runner_spec": "runner/loop.yaml", "loop_record": "final/loop-record.json", "published_status": str(args.get("published_status") or "draft")}))
     return _json({"success": True, "path": str(run_path), "track": track, "label": TRACK_LABELS[track], "trigger_mode": trigger_mode, "risk_mode": risk_mode, "depth": depth, "grade": grade, "validation": _validate_path(run_path), "next_action": "Fill state/brief.md, state/evidence-ledger.json, and logs/iteration-001.md with real predicate evidence."})
 
 
@@ -2180,7 +2177,11 @@ def _validate_loop_library_imports(run_path: Path) -> tuple[list[dict[str, str]]
     issues.extend(_require_markers(doctor, rel="final/loop-doctor.md", issue_type="loop_record_gap", markers=["## Verdict", "## Diagnosis", "## Cycle Trace", "## Minimal Repair"]))
     audit = _read(run_path / "final" / "loop-audit.md")
     issues.extend(_require_markers(audit, rel="final/loop-audit.md", issue_type="portfolio_audit_gap", markers=["audit_status", "## Scorecard", "## Recommendation"]))
-    if "audit_status: INSUFFICIENT_EVIDENCE" in audit:
+    audit_match = re.search(r"(?m)^-\s*audit_status:\s*([A-Z_]+)\s*$", audit)
+    audit_status = audit_match.group(1) if audit_match else ""
+    if audit_status and audit_status not in LOOP_AUDIT_STATUSES:
+        issues.append({"type": "portfolio_audit_gap", "path": "final/loop-audit.md", "message": f"invalid audit_status: {audit_status}"})
+    if audit_status == "INSUFFICIENT_EVIDENCE":
         warnings.append({"type": "portfolio_audit_gap", "path": "final/loop-audit.md", "message": "portfolio audit has not classified KEEP/PIVOT/RETIRE/KILL yet"})
     hiring = _read(run_path / "final" / "hiring-manager.md")
     issues.extend(_require_markers(hiring, rel="final/hiring-manager.md", issue_type="portfolio_audit_gap", markers=["## Recurring Gap", "## Candidate Decision", "## Trial / Retirement", "hire_status"]))
