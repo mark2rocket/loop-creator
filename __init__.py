@@ -30,6 +30,11 @@ def _setup_cli(subparser):
     create.add_argument("--buying-trigger", default="", help="GS buying trigger / economic pain")
     create.add_argument("--horizon", default="", help="GS time horizon")
     create.add_argument("--research-allowed", action="store_true", help="GS public research allowed")
+    create.add_argument("--published-status", default="draft", choices=["draft", "local", "validated", "published", "retired"], help="Loop record lifecycle state")
+    create.add_argument("--related-loops", default="", help="Comma-separated related loop slugs or IDs")
+    create.add_argument("--retirement-rule", default="", help="When this loop should retire")
+    create.add_argument("--kill-condition", default="", help="When this loop should be killed")
+    create.add_argument("--manual-trial", default="", help="One bounded manual trial before automation")
 
     validate = subs.add_parser("validate", help="Validate a loop run folder")
     validate.add_argument("path")
@@ -76,6 +81,11 @@ def _handle_cli(args):
             "buying_trigger": args.buying_trigger,
             "horizon": args.horizon,
             "research_allowed": args.research_allowed if args.research_allowed else None,
+            "published_status": args.published_status,
+            "related_loops": args.related_loops,
+            "retirement_rule": args.retirement_rule,
+            "kill_condition": args.kill_condition,
+            "manual_trial": args.manual_trial,
         }
         print(tools.create_scaffold(payload))
         return

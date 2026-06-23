@@ -31,6 +31,9 @@ TRIGGER_MODES = {"manual": "manual", "interval": "interval", "event": "event"}
 RISK_MODES = {"quick", "normal", "deep", "blocked"}
 COVERAGE_RELATIONS = {"direct", "generic", "uncertain", "none"}
 PASS_POLICIES = {"pass_once", "pass_2_of_3", "pass_3_of_3", "deterministic_only", "judge_with_trace_citations"}
+PUBLISHED_STATUSES = {"draft", "local", "validated", "published", "retired"}
+NEXT_ACTION_GATES = {"GO", "HOLD", "CAP", "BLOCK"}
+LOOP_AUDIT_STATUSES = {"INSUFFICIENT_EVIDENCE", "KEEP", "PIVOT", "RETIRE", "KILL"}
 AGENT_BACKENDS = {"hermes", "codex", "claude-code", "opencode", "openhands", "shell", "external"}
 AUTOMATION_LEVELS = {"advisory", "step-mode", "supervised", "autonomous"}
 FAILURE_TAXONOMY_TYPES = [
@@ -45,7 +48,7 @@ SKILL_ROOT = Path(get_hermes_home()) / "skills" / "strategy" / "loop-harness-cre
 GS_SOURCE_ROOT = Path.home() / "haven-synk" / "30-Output" / "Teaching" / "lectures-challenges" / "50-harnesses" / "growth-strategy-ralph-kit"
 TRACE_SECTIONS = ["Loop Goal", "Input State", "Learning Trace", "Action Taken", "Evaluation Surface", "Result", "Failure Taxonomy", "Evidence Update", "Next Loop Condition"]
 TRACE_FIELD_HINTS = ["Target predicate", "Why this loop now", "Starting artifact", "Current constraint", "Controlled variable", "Prediction before change", "Measurement method", "Expected result", "Observed result", "Study delta", "Act decision", "Learning level", "Change made", "Mutation policy applied", "Rubric/test/review used", "Negative assertion checked", "Verdict", "Score or qualitative delta", "Type:", "New evidence added", "Continue / stop / escalate", "Next target"]
-GOAL_CONTRACT_FIELDS = ["goal_id", "grade", "trigger_mode", "objective", "completion_criteria", "hard_fails", "verification_surface", "budget", "lifecycle_state", "owner", "current_artifact_hash", "stale_update_guard", "next_continuation_condition"]
+GOAL_CONTRACT_FIELDS = ["goal_id", "grade", "trigger_mode", "objective", "completion_criteria", "hard_fails", "verification_surface", "budget", "lifecycle_state", "owner", "current_artifact_hash", "stale_update_guard", "next_continuation_condition", "success_stop", "no_op_stop", "stagnation_stop", "exhausted_stop", "approval_required_stop", "retirement_rule", "kill_condition", "task_status", "next_action_gate", "allowed_next_action", "off_limits"]
 LEARNING_TRACE_REQUIRED = ["Current constraint", "Controlled variable", "Prediction before change", "Measurement method", "Observed result", "Study delta", "Act decision", "Learning level"]
 SPEC_CONTRACT_FIELDS = ["non_goals", "must_read", "rejected_alternatives", "risks", "acceptance_criteria"]
 FAKE_EVIDENCE_MARKERS = ("not run", "notrun", "did not run", "didn't run", "assumed", "would pass", "should pass", "to be done", "tbd", "todo", "n/a", "pending", "placeholder", "will run", "not yet")
@@ -197,6 +200,11 @@ ACO_ISSUE_MAP = {
     "fit_score_gap": "A6.Plan/O3.Gate",
     "runner_spec_gap": "A6.Execution/C3.Rule",
     "quality_warning": "A6.Improvement",
+    "loop_record_gap": "A6.Structure/O3.State",
+    "retirement_gap": "O3.Gate",
+    "next_action_gate_gap": "O3.Gate/C3.Rule",
+    "portfolio_audit_gap": "A6.Improvement/O3.Evidence",
+    "cross_run_learning_gap": "A6.Improvement/O3.Evidence",
 }
 
 
@@ -408,6 +416,8 @@ def _hsd_values(track: str, depth: str, args: dict[str, Any]) -> dict[str, str]:
         "verify": str(verify),
         "hard_fail": str(_arg_value(args, "hard_fail") or "TODO"),
         "context": str(_arg_value(args, "context") or "TODO"),
+        "deterministic_check": str(args.get("check_command") or "TODO: lint/test/schema/type/readback/visual diff or other explainable check"),
+        "judge_check": str(_arg_value(args, "reader") or "TODO: human or rubric judge for non-deterministic quality"),
         "hook_moment": str(_arg_value(args, "hook_moment") or "TODO"),
         "boundary_rule": str(_arg_value(args, "boundary_rule") or "TODO"),
         "escalation_rule": str(_arg_value(args, "escalation_rule") or "TODO"),
@@ -423,6 +433,8 @@ def _hsd_improvement_suggestions(values: dict[str, str]) -> list[str]:
     escalation = values["escalation_rule"].lower()
     if "todo" in values["verify"].lower() or len(values["verify"]) < 18:
         suggestions.append("검증 표면이 약해. command, rubric, reviewer, live check 중 하나를 더 구체화해.")
+    if "todo" in values.get("deterministic_check", "").lower():
+        suggestions.append("LLM 판정 전에 lint/test/schema/type/readback/visual diff처럼 결정적이고 설명 가능한 체크를 하나 이상 설계해.")
     if "no_fake_evidence" not in boundary and "검증" not in hard_fail and "evidence" not in hard_fail:
         suggestions.append("Boundary Rule에 `no_fake_evidence` 또는 '검증 없는 완료 선언 금지'를 명시해.")
     if "agent:step" not in hook and "iteration" not in hook:
@@ -457,18 +469,25 @@ def _hsd_template(track: str, depth: str, args: dict[str, Any], run_id: str) -> 
 - Hard fail: {v['hard_fail']}
 - Must-read context: {v['context']}
 
-## 3. Control Contract
+## 3. Verification System Design Gate
+- Human judgment to encode: what the human believes good/bad looks like before the agent writes or revises.
+- Deterministic / explainable check first: {v['deterministic_check']}
+- LLM / judge check only for residue: {v['judge_check']}
+- Integration point: run checks between iterations, not only at the final review.
+- Design question: what part of this verification must not be delegated to an LLM judge?
+
+## 4. Control Contract
 - Hook moment: {v['hook_moment']}
 - Boundary rule: {v['boundary_rule']}
 - Escalation rule: {v['escalation_rule']}
 - Deletion rule: {v['deletion_rule']}
 
-## 4. ACO Mapping
-- A6.Plan: Goal, artifact, reader, verify, hard-fail.
+## 5. ACO Mapping
+- A6.Plan: Goal, artifact, reader, verify, hard-fail, verification-system design.
 - C3.Control: Hook moment, boundary rule, escalation rule, deletion rule.
 - O3.Operation: Evidence ledger, approval gate, predicate list, review report, handoff.
 
-## 5. Design Review Suggestions
+## 6. Design Review Suggestions
 {chr(10).join(f'- {item}' for item in suggestions)}
 
 ## Approval Gate
@@ -496,6 +515,10 @@ Evaluator
       ↓
 Success Gate
   └─ {v['verify']}
+      ↓
+Verification System
+  ├─ deterministic: {v['deterministic_check']}
+  └─ judge residue: {v['judge_check']}
       ↓
 Hard Fail / Boundary
   ├─ hard_fail: {v['hard_fail']}
@@ -643,7 +666,7 @@ def _harness_template(track: str, depth: str, trigger_mode: str = "manual") -> s
 - Context: required source/brief/current artifact boundaries.
 - Plan: completion criteria, hard-fails, verifier surface, budget.
 - Execution: maker/checker split, approval boundary, side-effect limits.
-- Verification: static/domain/execution/human gate ladder.
+- Verification: static/domain/execution/human gate ladder; prefer deterministic and explainable checks before LLM/judge review.
 - Improvement: failure taxonomy, policy update, skill/rule promotion or deletion.
 
 ### C3 — Control
@@ -677,14 +700,25 @@ def _harness_template(track: str, depth: str, trigger_mode: str = "manual") -> s
 7. Memory / Evidence Update:
 8. Transfer Check:
 
+## Verification System Design
+- Human judgment to codify: what quality, failure, taste, safety, or business judgment must be translated into rules/checks.
+- Deterministic checks first: lint, type/schema checks, unit/integration/E2E/visual tests, readback, fixture assertions, diff checks, or command output.
+- LLM/judge checks second: use only for residue that cannot yet be made deterministic; require cited evidence paths and trace refs.
+- Integration point: checks should run between generation steps so drift is caught before it compounds.
+- Non-delegable judgment: name the final decision that still belongs to the human/verifier.
+
 ## Predicate Test Plan
 - Predicate 1:
   - Success signal:
   - Negative assertion:
+  - Deterministic check:
+  - Judge/human residue:
   - Evidence source:
 - Predicate 2:
   - Success signal:
   - Negative assertion:
+  - Deterministic check:
+  - Judge/human residue:
   - Evidence source:
 
 ## Iteration Rule
@@ -693,7 +727,7 @@ def _harness_template(track: str, depth: str, trigger_mode: str = "manual") -> s
 - GS Quick: 3–5 loops; GS standard: 6–10 loops; Full GS: canonical GS kit evidence rules.
 
 ## Stop Rule
-Stop only when hard-fails are cleared, per-loop traces are complete, and expected next gain is below 5 points or blocked by human/domain input.
+Stop only when hard-fails are cleared, deterministic checks or explicit evidence surfaces have actually run, per-loop traces are complete, and expected next gain is below 5 points or blocked by human/domain input.
 
 ## Anti-gaming Rules
 - Do not modify the check command or exit criteria to force success.
@@ -768,6 +802,10 @@ def _goal_contract_template(track: str, depth: str, args: dict[str, Any], run_id
 - completion_criteria: TODO: observable criteria that make completion auditable
 - hard_fails: TODO: conditions that block PASS/PASS_WITH_RISKS
 - verification_surface: TODO: files, commands, rubrics, reviewer, or live checks used to judge completion
+- deterministic_checks: TODO: lint/test/schema/type/readback/visual diff/fixture command that can fail without LLM judgment
+- judge_checks: TODO: LLM/human/rubric checks only for residue that cannot be deterministic yet
+- human_judgment_owner: TODO: who defines the quality/failure criteria and owns final PASS
+- verification_integration_point: TODO: before action, between iterations, pre-final, or release gate
 - budget: {budget}
 - lifecycle_state: active
 - owner: human final approval / harness scaffolding / verifier completion gate
@@ -775,6 +813,19 @@ def _goal_contract_template(track: str, depth: str, args: dict[str, Any], run_id
 - stale_update_guard: goal_id + run_id + iteration_id + artifact_hash must match before state mutation
 - kickoff_boundary: kickoff/deeplink text does not install files, enable hooks, or prove autonomous execution
 - next_continuation_condition: TODO: named failed predicate, remaining hard-fail, material expected gain, or explicit human instruction
+- success_stop: TODO: observable condition that ends the loop as success
+- no_op_stop: TODO: condition for clean no-op with no changes
+- stagnation_stop: TODO: no-progress rule that prevents endless retries
+- exhausted_stop: TODO: budget/iteration/time exhaustion rule
+- approval_required_stop: TODO: condition that pauses for human approval
+- retirement_rule: TODO: when this loop should be retired after success or loss of usefulness
+- kill_condition: TODO: evidence that this loop wastes budget or creates risk and should be killed
+
+## Exit / Next-Action Gate
+- task_status: TODO: PASS | DELAY | BLOCK for current task only
+- next_action_gate: TODO: GO | HOLD | CAP | BLOCK; separate from task completion
+- allowed_next_action: TODO: exactly one next action, or none
+- off_limits: TODO: actions still not authorized even if current task passes
 
 ## Spec Contract Addendum
 - non_goals: TODO: over-broad scopes or tempting expansions this run will not do
@@ -826,6 +877,8 @@ def _iteration_template(num: int = 1) -> str:
 - Mutation policy applied:
 
 ## Evaluation Surface
+- Deterministic / explainable check used:
+- LLM/judge check used only for residue:
 - Rubric/test/review used:
 - Negative assertion checked:
 - Evidence source:
@@ -919,6 +972,7 @@ Self-pace this loop. After each iteration, run the check command or evaluation s
 - Scaffold generation is not autonomous execution; validation evidence must be produced and read back.
 
 ## Lightweight Learning Trace
+- Verification design: encode human judgment into deterministic checks first; use LLM/judge review only for residue with cited evidence.
 - Independent verifier pass: trust command/readback output, not implementer claims.
 - Guardrails learning: if the same failure repeats twice, record a guardrail before trying another fix.
 - Reflexion debug: after a failed repro, write the reflection to the iteration log before retrying.
@@ -1385,6 +1439,161 @@ Purpose: bind ACO Control 3 to real Hermes lifecycle events. These names must ma
 """
 
 
+
+def _loop_record_template(track: str, depth: str, trigger_mode: str, grade: str, risk_mode: str, args: dict[str, Any], run_id: str) -> str:
+    slug = _safe_slug(args.get("slug"), run_id)
+    title = str(_arg_value(args, "goal") or _arg_value(args, "outcome") or f"{TRACK_LABELS[track]} run").strip()
+    data = {
+        "schema": "loop-creator-loop-record-v1",
+        "slug": slug,
+        "title": title[:120],
+        "track": track,
+        "depth": depth or "n/a",
+        "grade": grade,
+        "risk_mode": risk_mode,
+        "trigger_mode": trigger_mode,
+        "published_status": str(args.get("published_status") or "draft"),
+        "category": "growth" if track == "gs" else "evaluation" if track == "standard" else "operations",
+        "use_when": str(_arg_value(args, "outcome") or _arg_value(args, "goal") or "TODO: when this loop should be used"),
+        "prompt": "TODO: copy-ready loop prompt under 80 words, grounded in this run package.",
+        "verification": {"title": str(_arg_value(args, "verify") or args.get("exit_when") or "TODO: observable verification title"), "detail": str(args.get("check_command") or "TODO: reproducible verification detail")},
+        "steps": ["Observe fresh state and pick one bounded action.", "Act only within the declared authority boundary.", "Verify under consistent conditions and record evidence.", "Repeat, stop, retire, or ask for approval according to terminal rules."],
+        "why": "TODO: evidence-backed reason this loop is worth running instead of a one-shot workflow.",
+        "implementation_note": "Generated scaffold is not execution proof; fill evidence before claiming validation.",
+        "keywords": [track, trigger_mode, "loop-creator"],
+        "related": [x.strip() for x in str(args.get("related_loops") or "").split(",") if x.strip()],
+        "authority_boundary": str(_arg_value(args, "constraints") or "TODO: allowed inputs/actions and off-limits side effects"),
+        "terminal_states": {"success": "TODO: observable success stop", "clean_no_op": "TODO: no action needed with evidence", "blocked": "TODO: blocker and owner", "approval_required": "TODO: approval gate", "exhausted": "TODO: budget exhausted without success", "stagnated": "TODO: no measurable progress"},
+        "retirement_rule": str(args.get("retirement_rule") or "TODO: when to retire after success, duplicate ownership, stale evidence, or low value"),
+        "kill_condition": str(args.get("kill_condition") or "TODO: when to KILL because waste/risk exceeds value"),
+        "manual_trial": str(args.get("manual_trial") or "TODO: one manual trial before scheduling/autonomy"),
+        "next_action_gate": {"task_status": "TODO: PASS | DELAY | BLOCK", "gate": "TODO: GO | HOLD | CAP | BLOCK", "allowed_next_action": "TODO: exactly one allowed next action", "off_limits": "TODO: actions not authorized"},
+    }
+    return json.dumps(data, ensure_ascii=False, indent=2) + "\n"
+
+def _loop_doctor_template() -> str:
+    return """# Loop Doctor
+
+Purpose: audit or minimally repair this loop without changing its intended outcome.
+
+## Verdict
+- status: TODO: Ready | Repair needed | Not actually a loop
+
+## Diagnosis
+- material finding 1: TODO
+- material finding 2: TODO
+- material finding 3: TODO
+
+## Cycle Trace
+- fresh observation can change next action: TODO
+- bounded action: TODO
+- reproducible verification: TODO
+- record/handoff state: TODO
+- explicit stop states: TODO
+
+## Minimal Repair
+> TODO: smallest repaired copy-ready loop, or `No repair needed`, or `Use this as a one-shot workflow`.
+"""
+
+def _loop_audit_template() -> str:
+    return """# Loop Portfolio Audit
+
+Purpose: read-only review of whether this loop should continue, change, retire, or be killed.
+
+## Status
+- audit_status: INSUFFICIENT_EVIDENCE
+- evidence_window: TODO
+- evaluation_version: TODO
+
+## Scorecard
+| Dimension | Evidence | Verdict |
+|---|---|---|
+| Purpose / success criteria | TODO | INSUFFICIENT_EVIDENCE |
+| Budget / kill condition | TODO | INSUFFICIENT_EVIDENCE |
+| Ledger / raw evidence | TODO | INSUFFICIENT_EVIDENCE |
+| Operational delivery or measured result | TODO | INSUFFICIENT_EVIDENCE |
+
+## Measured-loop Metrics, if applicable
+- hit_rate: TODO: new-best runs / eligible runs
+- waste_ratio: TODO: runs beyond futility threshold / eligible runs
+- mean_gain: TODO: average improvement among new-best runs
+
+## Recommendation
+- KEEP / PIVOT / RETIRE / KILL / INSUFFICIENT_EVIDENCE: TODO
+- reason: TODO
+"""
+
+def _adaptation_plan_template() -> str:
+    return """# Adaptation Plan
+
+Purpose: prefer adapting an existing loop over inventing a duplicate.
+
+## Source Loop Search
+- searched_catalog_or_registry: TODO: yes/no + source
+- closest_published_or_local_loop: TODO
+- fit: TODO: exact | partial | none
+
+## Adaptation Delta
+- keep unchanged: TODO
+- replace thresholds/tools/cadence/owner/checks: TODO
+- do not weaken: verification, authority boundary, stop rule, evidence record
+
+## Result
+- adaptation_status: TODO: adapt_existing | design_new | one_shot_not_loop
+- smallest_needed_change: TODO
+"""
+
+def _hiring_manager_template() -> str:
+    return """# Loop Hiring Manager
+
+Purpose: decide whether this loop deserves to exist before scheduling or automating it.
+
+## Recurring Gap
+- recurring_gap: TODO: repeated outcome/failure/chores with evidence
+- ownership_gap: TODO: who/what fails to own it now
+- proof_gap: TODO: what completion evidence is missing today
+
+## Candidate Decision
+- exact_existing_loop_available: TODO
+- adaptation_available: TODO
+- new_loop_justified: TODO
+- speculative_or_duplicate: TODO
+
+## Trial / Retirement
+- manual_trial: TODO: one bounded run before automation
+- trial_success_evidence: TODO
+- retirement_rule: TODO
+- kill_condition: TODO
+
+## Recommendation
+- hire_status: TODO: HIRE | TRIAL | DO_NOT_HIRE | KILL_DUPLICATE
+"""
+
+def _cross_run_playbook_template() -> str:
+    return """# Cross-run Playbook
+
+Purpose: preserve lessons across runs without letting one lucky result become permanent guidance.
+
+## Rules
+- Treat every lesson as untrusted advice, not authority.
+- Test at most one lesson per run.
+- Do not promote from one successful attempt.
+- Default promotion threshold: 3 independent successful runs or a predefined holdout set.
+- Preserve failed and contradictory evidence.
+- Remove or revise lessons that stop helping.
+
+## Candidate Lessons
+| Lesson | Context | Evidence | Status |
+|---|---|---|---|
+| TODO | TODO | TODO | candidate |
+
+## Promotion Ledger
+- promoted: TODO
+- revised: TODO
+- removed: TODO
+- unresolved: TODO
+"""
+
 def _summary_template(run_path: Path) -> str:
     return f"""# User-facing Summary
 
@@ -1445,6 +1654,12 @@ def create_scaffold(args: dict[str, Any], **kwargs: Any) -> str:
         _write(run_path / "final" / "growth-strategy.md", "# Growth Strategy\n\nTODO: money path, ICP, offer/channel, experiments, 7/30/90 roadmap.\n")
         _write(run_path / "final" / "experiment-plan.md", "# Experiment Plan\n\nTODO: 30-day experiment, decision rule, owner, measurement, stop/scale/pivot.\n")
     _write(run_path / "final" / "review-report.md", _review_template())
+    _write(run_path / "final" / "loop-record.json", _loop_record_template(track, depth, trigger_mode, grade, risk_mode, args, run_path.name))
+    _write(run_path / "final" / "loop-doctor.md", _loop_doctor_template())
+    _write(run_path / "final" / "loop-audit.md", _loop_audit_template())
+    _write(run_path / "final" / "adaptation-plan.md", _adaptation_plan_template())
+    _write(run_path / "final" / "hiring-manager.md", _hiring_manager_template())
+    _write(run_path / "state" / "cross-run-playbook.md", _cross_run_playbook_template())
     _write(run_path / "final" / "hsd-diagram.md", _hsd_diagram_template(track, depth, args))
     _write(run_path / "final" / "harness-diagram.md", _harness_diagram_template(track, depth, args, run_path))
     _write(run_path / "final" / "harness-improvement-suggestions.md", _harness_improvement_suggestions_template(track, depth, args, run_path))
@@ -1453,9 +1668,9 @@ def create_scaffold(args: dict[str, Any], **kwargs: Any) -> str:
     _write(run_path / "final" / "quality-document.md", _quality_document_template(track, depth))
     _write(run_path / "final" / "user-facing-summary.md", _summary_template(run_path))
     _write(run_path / "logs" / "iteration-001.md", _iteration_template(1))
-    identity = {"model_id": str(args.get("model_id") or "unknown"), "harness_id": "loop-creator@1.5.0", "grader_id": "mixed", "task_slice": track, "regression_attribution": "unknown"}
+    identity = {"model_id": str(args.get("model_id") or "unknown"), "harness_id": "loop-creator@1.5.1", "grader_id": "mixed", "task_slice": track, "regression_attribution": "unknown"}
     fit = _fit_score(track, depth, args, risk_mode)
-    _write(run_path / "loop-creator.json", _json({"track": track, "label": TRACK_LABELS[track], "trigger_mode": trigger_mode, "risk_mode": risk_mode, "depth": depth, "grade": grade, "created_at": now.isoformat(timespec="seconds"), "source_skill": str(SKILL_ROOT), "gs_source": _source_status() if (track == "gs" and depth == "Full GS") else None, "intake": _intake_status(args, track), "hsd": {"approved": bool(args.get("approve_hsd") or args.get("allow_todo")), "diagram": "final/hsd-diagram.md"}, "control_policy": DEFAULT_CONTROL_POLICY, "identity": identity, "fit_score": fit, "eval_pack": {"path": "eval/eval_spec.yaml", "pass_policy": "pass_3_of_3" if risk_mode == "deep" else "pass_once"}, "runner_spec": "runner/loop.yaml"}))
+    _write(run_path / "loop-creator.json", _json({"track": track, "label": TRACK_LABELS[track], "trigger_mode": trigger_mode, "risk_mode": risk_mode, "depth": depth, "grade": grade, "created_at": now.isoformat(timespec="seconds"), "source_skill": str(SKILL_ROOT), "gs_source": _source_status() if (track == "gs" and depth == "Full GS") else None, "intake": _intake_status(args, track), "hsd": {"approved": bool(args.get("approve_hsd") or args.get("allow_todo")), "diagram": "final/hsd-diagram.md"}, "control_policy": DEFAULT_CONTROL_POLICY, "identity": identity, "fit_score": fit, "eval_pack": {"path": "eval/eval_spec.yaml", "pass_policy": "pass_3_of_3" if risk_mode == "deep" else "pass_once"}, "runner_spec": "runner/loop.yaml", "loop_record": "final/loop-record.json", "published_status": "draft"}))
     return _json({"success": True, "path": str(run_path), "track": track, "label": TRACK_LABELS[track], "trigger_mode": trigger_mode, "risk_mode": risk_mode, "depth": depth, "grade": grade, "validation": _validate_path(run_path), "next_action": "Fill state/brief.md, state/evidence-ledger.json, and logs/iteration-001.md with real predicate evidence."})
 
 
@@ -1921,6 +2136,58 @@ def _validate_identity_fit_runner(run_path: Path, meta: dict[str, Any]) -> tuple
             issues.append({"type": "runner_spec_gap", "path": runner_rel, "message": f"invalid agent_backend: {backend}"})
     return issues, warnings
 
+
+def _validate_loop_library_imports(run_path: Path) -> tuple[list[dict[str, str]], list[dict[str, str]]]:
+    issues: list[dict[str, str]] = []
+    warnings: list[dict[str, str]] = []
+    rel = "final/loop-record.json"
+    path = run_path / rel
+    if not path.exists():
+        return ([{"type": "loop_record_gap", "path": rel, "message": "loop record missing"}], warnings)
+    try:
+        record = json.loads(path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        return ([{"type": "loop_record_gap", "path": rel, "message": f"invalid JSON: {type(exc).__name__}"}], warnings)
+    required = ["schema", "slug", "title", "track", "trigger_mode", "published_status", "use_when", "prompt", "verification", "steps", "why", "implementation_note", "keywords", "related", "authority_boundary", "terminal_states", "retirement_rule", "kill_condition", "manual_trial", "next_action_gate"]
+    for field in required:
+        value = record.get(field)
+        if value in (None, ""):
+            issues.append({"type": "loop_record_gap", "path": rel, "message": f"missing {field}"})
+    status = record.get("published_status")
+    if status not in PUBLISHED_STATUSES:
+        issues.append({"type": "loop_record_gap", "path": rel, "message": f"invalid published_status: {status}"})
+    if not re.match(r"^[a-z0-9가-힣._-]+$", str(record.get("slug") or "")):
+        issues.append({"type": "loop_record_gap", "path": rel, "message": "slug must be stable and URL/file safe"})
+    verification = record.get("verification") if isinstance(record.get("verification"), dict) else {}
+    for field in ["title", "detail"]:
+        if not str(verification.get(field) or "").strip():
+            issues.append({"type": "loop_record_gap", "path": rel, "message": f"verification.{field} missing"})
+    steps = record.get("steps")
+    if not isinstance(steps, list) or len(steps) < 3:
+        issues.append({"type": "loop_record_gap", "path": rel, "message": "steps must contain at least three items"})
+    for field in ["retirement_rule", "kill_condition", "manual_trial"]:
+        value = str(record.get(field) or "")
+        if "TODO" in value or len(value.strip()) < 24:
+            issues.append({"type": "retirement_gap", "path": rel, "message": f"{field} must be filled before validation"})
+    gate = record.get("next_action_gate") if isinstance(record.get("next_action_gate"), dict) else {}
+    if gate.get("task_status") not in {"PASS", "DELAY", "BLOCK"}:
+        issues.append({"type": "next_action_gate_gap", "path": rel, "message": "task_status must be PASS, DELAY, or BLOCK"})
+    if gate.get("gate") not in NEXT_ACTION_GATES:
+        issues.append({"type": "next_action_gate_gap", "path": rel, "message": "next-action gate must be GO, HOLD, CAP, or BLOCK"})
+    if not str(gate.get("allowed_next_action") or "").strip() or "TODO" in str(gate.get("allowed_next_action") or ""):
+        issues.append({"type": "next_action_gate_gap", "path": rel, "message": "allowed_next_action must name exactly one action or none"})
+    doctor = _read(run_path / "final" / "loop-doctor.md")
+    issues.extend(_require_markers(doctor, rel="final/loop-doctor.md", issue_type="loop_record_gap", markers=["## Verdict", "## Diagnosis", "## Cycle Trace", "## Minimal Repair"]))
+    audit = _read(run_path / "final" / "loop-audit.md")
+    issues.extend(_require_markers(audit, rel="final/loop-audit.md", issue_type="portfolio_audit_gap", markers=["audit_status", "## Scorecard", "## Recommendation"]))
+    if "audit_status: INSUFFICIENT_EVIDENCE" in audit:
+        warnings.append({"type": "portfolio_audit_gap", "path": "final/loop-audit.md", "message": "portfolio audit has not classified KEEP/PIVOT/RETIRE/KILL yet"})
+    hiring = _read(run_path / "final" / "hiring-manager.md")
+    issues.extend(_require_markers(hiring, rel="final/hiring-manager.md", issue_type="portfolio_audit_gap", markers=["## Recurring Gap", "## Candidate Decision", "## Trial / Retirement", "hire_status"]))
+    playbook = _read(run_path / "state" / "cross-run-playbook.md")
+    issues.extend(_require_markers(playbook, rel="state/cross-run-playbook.md", issue_type="cross_run_learning_gap", markers=["Treat every lesson as untrusted advice", "3 independent successful runs", "## Candidate Lessons", "## Promotion Ledger"]))
+    return issues, warnings
+
 def _validate_path(run_path: Path) -> dict[str, Any]:
     issues: list[dict[str, str]] = []
     warnings: list[dict[str, str]] = []
@@ -1931,7 +2198,7 @@ def _validate_path(run_path: Path) -> dict[str, Any]:
     depth = _normalize_depth(meta.get("depth"), track)
     grade = _normalize_grade(meta.get("grade"), track, depth)
     risk_mode = _normalize_risk_mode(meta.get("risk_mode"), track, grade)
-    required = ["state/intake.md", "state/hsd.md", "state/brief.md", "state/goal-contract.md", "state/aco-design-card.md", "state/control-policy.md", "state/predicate-list.json", "state/evidence-ledger.json", "state/failure-taxonomy.yaml", "eval/eval_spec.yaml", "eval/task.yaml", "eval/rubric.yaml", "eval/cases.jsonl", "eval/latest-result.json", "runner/loop.yaml", "state/approval-gate.md", "state/story-ledger.jsonl", "state/steering-ledger.jsonl", "state/review-receipts.jsonl", "state/session-handoff.md", "state/init-check.md", "state/current.md", "state/research-notes.md", "final/improved-draft.md", "final/review-report.md", "final/hsd-diagram.md", "final/harness-diagram.md", "final/harness-improvement-suggestions.md", "final/quick-loop-card.md", "final/clean-state-checklist.md", "final/quality-document.md", "final/user-facing-summary.md", "final/gs-harness.md" if track == "gs" else "final/harness.md"]
+    required = ["state/intake.md", "state/hsd.md", "state/brief.md", "state/goal-contract.md", "state/aco-design-card.md", "state/control-policy.md", "state/predicate-list.json", "state/evidence-ledger.json", "state/failure-taxonomy.yaml", "eval/eval_spec.yaml", "eval/task.yaml", "eval/rubric.yaml", "eval/cases.jsonl", "eval/latest-result.json", "runner/loop.yaml", "state/approval-gate.md", "state/story-ledger.jsonl", "state/steering-ledger.jsonl", "state/review-receipts.jsonl", "state/session-handoff.md", "state/init-check.md", "state/current.md", "state/research-notes.md", "final/improved-draft.md", "final/review-report.md", "final/loop-record.json", "final/loop-doctor.md", "final/loop-audit.md", "final/adaptation-plan.md", "final/hiring-manager.md", "state/cross-run-playbook.md", "final/hsd-diagram.md", "final/harness-diagram.md", "final/harness-improvement-suggestions.md", "final/quick-loop-card.md", "final/clean-state-checklist.md", "final/quality-document.md", "final/user-facing-summary.md", "final/gs-harness.md" if track == "gs" else "final/harness.md"]
     if track == "full" or depth == "Full GS":
         required.append("final/loop-spec.md")
     if track == "gs":
@@ -1957,6 +2224,9 @@ def _validate_path(run_path: Path) -> dict[str, Any]:
     id_issues, id_warnings = _validate_identity_fit_runner(run_path, meta)
     issues.extend(id_issues)
     warnings.extend(id_warnings)
+    library_issues, library_warnings = _validate_loop_library_imports(run_path)
+    issues.extend(library_issues)
+    warnings.extend(library_warnings)
     story_issues, story_warnings = _validate_goal_story_artifacts(run_path, completion_claimed=_completion_claimed(run_path))
     issues.extend(story_issues)
     warnings.extend(story_warnings)
@@ -1977,6 +2247,9 @@ def _validate_path(run_path: Path) -> dict[str, Any]:
         issues.append({"type": "goal_contract_gap", "path": "state/goal-contract.md", "message": "budget_limited soft-stop rule missing"})
     if "kickoff_boundary" not in goal_contract:
         issues.append({"type": "goal_contract_gap", "path": "state/goal-contract.md", "message": "kickoff/install boundary missing"})
+    for marker in ["## Exit / Next-Action Gate", "success_stop", "no_op_stop", "stagnation_stop", "exhausted_stop", "approval_required_stop", "retirement_rule", "kill_condition", "next_action_gate", "off_limits"]:
+        if marker not in goal_contract:
+            issues.append({"type": "next_action_gate_gap", "path": "state/goal-contract.md", "message": f"missing lifecycle/gate marker: {marker}"})
     quick_card = _read(run_path / "final" / "quick-loop-card.md")
     for marker in ["## Copyable Kickoff", "Goal:", "Max iterations:", "Between iterations run:", "Exit when:", "Step 1:", "## Anti-gaming", "## Install / Hook Boundary", "## Lightweight Learning Trace"]:
         if marker not in quick_card:
@@ -2145,6 +2418,7 @@ Spec grade: LIGHT는 acceptance 중심, STANDARD는 non_goals/must_read/rejected
 빈칸 포함 scaffold가 필요하면 `allow_todo=true`를 붙여.
 
 생성된 run은 `state/intake.md`, `state/goal-contract.md`, `state/control-policy.md`, `logs/iteration-*.md`의 Learning Trace를 채워야 passable이 돼.
+Loop Library import: scaffold now also creates `final/loop-record.json`, `final/loop-doctor.md`, `final/loop-audit.md`, `final/adaptation-plan.md`, `final/hiring-manager.md`, and `state/cross-run-playbook.md`.
 이제 공식 이름은 `/loop-creator`야.
 """.strip()
 

@@ -41,6 +41,11 @@ def _create_run(root: str) -> pathlib.Path:
     assert "missing_at_creation" in intake, intake
     hsd = (run / "state" / "hsd.md").read_text(encoding="utf-8")
     assert "Harness Specification Document" in hsd and "## Approval Gate" in hsd, hsd
+    assert "Verification System Design Gate" in hsd and "Deterministic / explainable check first" in hsd, hsd
+    harness = (run / "final" / "harness.md").read_text(encoding="utf-8")
+    assert "## Verification System Design" in harness and "Deterministic checks first" in harness, harness
+    goal_contract = (run / "state" / "goal-contract.md").read_text(encoding="utf-8")
+    assert "deterministic_checks" in goal_contract and "verification_integration_point" in goal_contract, goal_contract
     for rel in ["final/hsd-diagram.md", "final/harness-diagram.md", "final/harness-improvement-suggestions.md"]:
         assert (run / rel).exists(), rel
     return run
@@ -65,6 +70,19 @@ def _fill_goal_contract(run: pathlib.Path) -> None:
 - stale_update_guard: goal_id filled-run-smoke + run_id + iteration_id + artifact_hash must match
 - kickoff_boundary: kickoff prompt is instruction text only; it does not install files, enable hooks, or prove autonomous execution
 - next_continuation_condition: continue only while validator reports a concrete blocker or warning that changes passability confidence
+- success_stop: validator returns passable true with five concrete trace logs and a final review summary
+- no_op_stop: validator reports no actionable blocker and no artifact mutation is needed beyond evidence recording
+- stagnation_stop: stop after two validation passes show the same blocker without a new repair hypothesis
+- exhausted_stop: stop when the five-log smoke budget is complete or local verification cannot run
+- approval_required_stop: stop before changing plugin policy outside this local smoke fixture
+- retirement_rule: retire this fixture shape if three reviewed plugin changes show it no longer catches validator regressions
+- kill_condition: kill this fixture if it repeatedly passes while a seeded blocker remains undetected
+
+## Exit / Next-Action Gate
+- task_status: PASS
+- next_action_gate: HOLD
+- allowed_next_action: rerun smoke_passable.py after the next validator change
+- off_limits: production deployment, credential access, and weakening validator checks
 
 ## Spec Contract Addendum
 - non_goals: do not claim real domain artifact quality, do not mutate external repositories, do not bypass validator checks
@@ -430,6 +448,147 @@ Quality snapshot for the generated loop run. Update after material iteration bat
         encoding="utf-8",
     )
 
+
+def _fill_loop_library_artifacts(run: pathlib.Path) -> None:
+    record_path = run / "final" / "loop-record.json"
+    record = json.loads(record_path.read_text(encoding="utf-8"))
+    record.update({
+        "prompt": "Validate the local fixture, repair one concrete blocker, and stop when validation is passable with evidence.",
+        "why": "This regression fixture proves Loop Library-style governance fields do not break passable runs when filled with evidence.",
+        "authority_boundary": "Local plugin fixture only; no production, credentials, external repos, or deployment side effects.",
+        "retirement_rule": "Retire this fixture shape if three reviewed plugin changes show it no longer catches validator regressions.",
+        "kill_condition": "Kill this fixture if it repeatedly passes while a deliberately seeded blocker remains undetected.",
+        "manual_trial": "Run once manually through scripts/smoke_passable.py before relying on the validator change.",
+        "published_status": "validated",
+    })
+    record["terminal_states"] = {
+        "success": "validator passable true with zero issue counts and final zero warnings",
+        "clean_no_op": "no code change needed after validation readback",
+        "blocked": "validator reports a concrete blocker with path and issue type",
+        "approval_required": "plugin policy change exceeds local smoke fixture scope",
+        "exhausted": "five-log smoke budget is complete without passable validation",
+        "stagnated": "two validation passes return the same unresolved blocker",
+    }
+    record["next_action_gate"] = {
+        "task_status": "PASS",
+        "gate": "HOLD",
+        "allowed_next_action": "rerun smoke_passable.py after the next validator change",
+        "off_limits": "production deployment, credential access, and weakening validator checks",
+    }
+    record_path.write_text(json.dumps(record, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+    (run / "final" / "loop-doctor.md").write_text("""# Loop Doctor
+
+Purpose: audit or minimally repair this loop without changing its intended outcome.
+
+## Verdict
+- status: Ready
+
+## Diagnosis
+- material finding 1: no repair needed; fresh validation, bounded action, evidence record, and stop state are explicit.
+
+## Cycle Trace
+- fresh observation can change next action: validator issue counts decide the next repair.
+- bounded action: repair one validator blocker or warning fixture at a time.
+- reproducible verification: python3 scripts/smoke_passable.py.
+- record/handoff state: evidence-ledger, review-report, and session-handoff are filled.
+- explicit stop states: success, clean no-op, blocked, approval-required, exhausted, and stagnated are in loop-record.json.
+
+## Minimal Repair
+> No repair needed.
+""", encoding="utf-8")
+    (run / "final" / "loop-audit.md").write_text("""# Loop Portfolio Audit
+
+Purpose: read-only review of whether this loop should continue, change, retire, or be killed.
+
+## Status
+- audit_status: KEEP
+- evidence_window: local smoke regression run
+- evaluation_version: loop-creator-validator-current
+
+## Scorecard
+| Dimension | Evidence | Verdict |
+|---|---|---|
+| Purpose / success criteria | final validation passable true | KEEP |
+| Budget / kill condition | five-log budget and kill condition recorded | KEEP |
+| Ledger / raw evidence | evidence-ledger and review-report filled | KEEP |
+| Operational delivery or measured result | smoke script asserts passable and zero warnings | KEEP |
+
+## Measured-loop Metrics, if applicable
+- hit_rate: 1/1 local final validation pass
+- waste_ratio: 0/1 no extra run beyond fixture budget
+- mean_gain: scaffold blockers reduced to zero issue counts
+
+## Recommendation
+- KEEP / PIVOT / RETIRE / KILL / INSUFFICIENT_EVIDENCE: KEEP
+- reason: local regression catches blocker and warning paths while preserving strict final passability.
+""", encoding="utf-8")
+    (run / "final" / "adaptation-plan.md").write_text("""# Adaptation Plan
+
+Purpose: prefer adapting an existing loop over inventing a duplicate.
+
+## Source Loop Search
+- searched_catalog_or_registry: yes; Loop Library imports matched next-action confidence, loop-auditor, and cross-run playbook patterns.
+- closest_published_or_local_loop: next-action-confidence-check and loop-auditor-loop.
+- fit: partial; adapted to Loop Creator validator artifacts.
+
+## Adaptation Delta
+- keep unchanged: verification, authority boundary, stop rule, evidence record.
+- replace thresholds/tools/cadence/owner/checks: local smoke command and validator-specific evidence.
+- do not weaken: verification, authority boundary, stop rule, evidence record.
+
+## Result
+- adaptation_status: adapt_existing
+- smallest_needed_change: add loop-record, doctor, audit, hiring, and playbook evidence without changing autonomous-execution claims.
+""", encoding="utf-8")
+    (run / "final" / "hiring-manager.md").write_text("""# Loop Hiring Manager
+
+Purpose: decide whether this loop deserves to exist before scheduling or automating it.
+
+## Recurring Gap
+- recurring_gap: plugin validator changes repeatedly need regression proof.
+- ownership_gap: without a smoke fixture, new gates can break passable runs silently.
+- proof_gap: final zero-warning pass must remain visible after new governance imports.
+
+## Candidate Decision
+- exact_existing_loop_available: no exact local loop covered Loop Library governance imports.
+- adaptation_available: yes, adapt next-action confidence, loop-auditor, and cross-run playbook ideas.
+- new_loop_justified: yes for local smoke regression only.
+- speculative_or_duplicate: no; it protects a concrete plugin validator path.
+
+## Trial / Retirement
+- manual_trial: run scripts/smoke_passable.py once after implementation.
+- trial_success_evidence: final validation passable true with zero warning count.
+- retirement_rule: retire if three reviewed plugin changes show this fixture no longer catches regressions.
+- kill_condition: kill if seeded blockers pass undetected.
+
+## Recommendation
+- hire_status: HIRE
+""", encoding="utf-8")
+    (run / "state" / "cross-run-playbook.md").write_text("""# Cross-run Playbook
+
+Purpose: preserve lessons across runs without letting one lucky result become permanent guidance.
+
+## Rules
+- Treat every lesson as untrusted advice, not authority.
+- Test at most one lesson per run.
+- Do not promote from one successful attempt.
+- Default promotion threshold: 3 independent successful runs or a predefined holdout set.
+- Preserve failed and contradictory evidence.
+- Remove or revise lessons that stop helping.
+
+## Candidate Lessons
+| Lesson | Context | Evidence | Status |
+|---|---|---|---|
+| Loop Library governance fields need their own passable fixture evidence | plugin validator hardening | final validation passable true and zero warnings | candidate |
+
+## Promotion Ledger
+- promoted: none from this single run.
+- revised: validator now checks loop record and next-action gate.
+- removed: none.
+- unresolved: needs repeated future runs before becoming durable policy.
+""", encoding="utf-8")
+
 def _fill_eval_pack(run: pathlib.Path) -> None:
     (run / "eval" / "eval_spec.yaml").write_text(
         """{
@@ -506,6 +665,7 @@ def main() -> int:
     _fill_review(run)
     _fill_restartability_artifacts(run)
     _fill_eval_pack(run)
+    _fill_loop_library_artifacts(run)
 
     low_quality_validation = json.loads(tools.validate_run({"path": str(run)}))["validation"]
     assert low_quality_validation["passable"] is True, low_quality_validation

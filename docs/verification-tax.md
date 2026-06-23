@@ -12,16 +12,18 @@ Loop Creator exists to reduce that tax by turning work into a verifiable loop pa
 | Cognitive debt | people circulate AI output they cannot explain | goal contract, learning trace, handoff, quality document |
 | Intent debt | the reason behind choices disappears | non-goals, rejected alternatives, risks, approval gates |
 
-## From production to verification-layer design
+## From production to verification-system design
 
 In AI-native work, the expert role shifts:
 
 - from writing every artifact by hand
 - to defining what good looks like
-- to creating checks that catch what bad looks like
+- to encoding that judgment into deterministic, explainable checks where possible
+- to placing those checks between generation steps so drift is caught early
+- to using LLM/human judges only for the residue that cannot yet be made deterministic
 - to owning hard decisions that should not be automated away
 
-Loop Creator supports that shift by separating the maker, the checker, the evidence, and the human judgment gate.
+Loop Creator supports that shift by separating the maker, the deterministic checker, the judge residue, the evidence, and the human judgment gate.
 
 ## Queryable, closed loop, self-improving
 
@@ -49,9 +51,11 @@ A good Loop Creator package lets a reviewer answer these questions quickly:
 
 1. What was the goal?
 2. What would count as failure?
-3. What checks were available?
-4. What actually happened?
-5. What evidence supports the claim?
-6. What should happen next?
+3. Which human judgment was encoded into checks?
+4. Which checks are deterministic and explainable?
+5. Which parts still require LLM/human judge review, and why?
+6. What actually happened?
+7. What evidence supports the claim?
+8. What should happen next?
 
 If those answers are not recoverable, the team is paying Verification Tax manually.
