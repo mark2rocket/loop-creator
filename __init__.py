@@ -35,6 +35,7 @@ def _setup_cli(subparser):
     create.add_argument("--retirement-rule", default="", help="When this loop should retire")
     create.add_argument("--kill-condition", default="", help="When this loop should be killed")
     create.add_argument("--manual-trial", default="", help="One bounded manual trial before automation")
+    create.add_argument("--aoc-card-mode", action="store_true", help="Generate AOC Design Card Builder artifacts (default in v1.7+)")
 
     validate = subs.add_parser("validate", help="Validate a loop run folder")
     validate.add_argument("path")
@@ -86,6 +87,7 @@ def _handle_cli(args):
             "retirement_rule": args.retirement_rule,
             "kill_condition": args.kill_condition,
             "manual_trial": args.manual_trial,
+            "aoc_card_mode": True if args.aoc_card_mode else None,
         }
         print(tools.create_scaffold(payload))
         return

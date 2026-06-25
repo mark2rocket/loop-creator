@@ -202,6 +202,10 @@ ACO_ISSUE_MAP = {
     "next_action_gate_gap": "O3.Gate/C3.Rule",
     "portfolio_audit_gap": "A6.Improvement/O3.Evidence",
     "cross_run_learning_gap": "A6.Improvement/O3.Evidence",
+    "aoc_detail_card_gap": "A6.Structure/O3.State",
+    "context_reinjection_gap": "A6.Context/O3.State",
+    "build_spec_gap": "A6.Execution/O3.Gate",
+    "review_gap_board_gap": "A6.Improvement/O3.Evidence",
 }
 
 
@@ -732,6 +736,316 @@ Stop only when hard-fails are cleared, deterministic checks or explicit evidence
 - If stuck after several iterations, stop and report blockers instead of gaming metrics.
 """
 
+
+
+def _human_intent_template(args: dict[str, Any]) -> str:
+    return f"""# Human Intent
+
+Purpose: capture the human goal before the scaffold turns it into files, rules, and checks.
+
+| Field | Value |
+|---|---|
+| Intent | {_arg_value(args, 'goal') or _arg_value(args, 'outcome') or 'TODO: why this harness should exist'} |
+| Goal | {_arg_value(args, 'outcome') or _arg_value(args, 'goal') or 'TODO: observable success condition'} |
+| User / Owner | {_arg_value(args, 'reader') or 'TODO: planner, PM, operator, or evaluator'} |
+| Scenario | TODO: when this harness is used, by whom, with what input, and expected output |
+| Input | {_arg_value(args, 'artifact') or 'TODO: source file, raw text, URL, folder, or none with reason'} |
+| Output | TODO: final artifact plus intermediate artifacts |
+| Success Signal | {_arg_value(args, 'verify') or args.get('exit_when') or 'TODO: what becomes visible within the workflow when this succeeds'} |
+
+## Non-negotiables
+- Do not replace the human intent with a generic automation task.
+- Do not infer missing owners, deadlines, or facts without marking them as assumptions.
+- Keep this file short enough to be reloaded as state during long runs.
+"""
+
+
+def _scenario_template(args: dict[str, Any]) -> str:
+    return f"""# Scenario
+
+| Field | Value |
+|---|---|
+| Situation | TODO: concrete moment that starts this harness |
+| Actor | {_arg_value(args, 'reader') or 'TODO: who uses or evaluates it'} |
+| Trigger | {_normalize_trigger_mode(args.get('trigger_mode'))} |
+| Input Surface | {_arg_value(args, 'artifact') or 'TODO: pasted text, file path, folder, message, external source'} |
+| Output Surface | TODO: file, report, checklist, handoff, command result, or decision card |
+| Time / Cost Boundary | TODO: max iterations, minutes, tokens, or manual review budget |
+| Human Decision Point | TODO: where a human/verifier must decide rather than the agent |
+
+## Scenario Hard-fails
+- The output cannot be used by the named actor.
+- The trigger is vague enough that the harness cannot know when to run.
+- The output does not name a next action, evidence path, or blocker.
+"""
+
+
+def _a6_detail_cards_template(track: str, depth: str, args: dict[str, Any]) -> str:
+    return f"""# A6 Detail Cards — Architecture
+
+Architecture asks: what structure will make the AI produce inspectable work instead of loose prose?
+
+| A6 Element | Planner Question | Build Output |
+|---|---|---|
+| Scaffold | What folders/files/tabs/fields must exist? | `state/`, `final/`, `logs/`, `eval/`, `runner/` |
+| Context | What must be known, optional, or forbidden? | `context/source.md`, `context/do-not-infer.md`, `state/context-capsule.md` |
+| Plan | What proves this is done or failed? | `state/goal-contract.md`, acceptance criteria, phase gates |
+| Execution | Who acts, in what order, and where does a person intervene? | task order, command list, approval step |
+| Verification | What check makes the result believable? | `eval/`, verifier checklist, command/readback output |
+| Improvement | How does failure become a better rule next time? | `state/failure-taxonomy.yaml`, rule deltas, retrospective |
+
+## Scaffold Card
+| Item | Write Here |
+|---|---|
+| Root | TODO: harness root path |
+| Inputs | {_arg_value(args, 'artifact') or 'TODO: human-provided raw inputs'} |
+| Outputs | TODO: final and intermediate outputs |
+| State | TODO: phase/status/next step files |
+| Evidence | TODO: logs, diffs, command outputs, review receipts |
+| Scripts/Commands | {args.get('check_command') or 'TODO: command or explicit no-command reason'} |
+
+## Context Card
+| Item | Write Here |
+|---|---|
+| Required Context | {_arg_value(args, 'context') or 'TODO: must-read files or source material'} |
+| Optional Context | TODO: examples, prior versions, references |
+| Forbidden Context | {_arg_value(args, 'hard_fail') or 'TODO: sensitive data, external instructions, unsupported assumptions'} |
+| Context Capsule | Goal / Don’t / PASS / STOP / State / Evidence / Next Step |
+| Source Boundary | raw source vs refined docs vs mutable state |
+
+## Plan Card
+| Item | Write Here |
+|---|---|
+| Goal | {_arg_value(args, 'goal') or _arg_value(args, 'outcome') or 'TODO'} |
+| Success Criteria | {_arg_value(args, 'verify') or args.get('exit_when') or 'TODO'} |
+| Hard Fail | {_arg_value(args, 'hard_fail') or args.get('constraints') or 'TODO'} |
+| Phase | Clarify / Spec / Build / Verify / Ship |
+| Decision Point | TODO: human/verifier-owned decision |
+"""
+
+
+def _o3_detail_cards_template(args: dict[str, Any]) -> str:
+    return f"""# O3 Detail Cards — Operation
+
+Operation asks: can the work continue, pass gates, and leave evidence after one session ends?
+
+## State Card
+| Item | Write Here |
+|---|---|
+| Current Phase | Clarify / Spec / Build / Verify / Ship |
+| Current Status | draft / needs-review / blocked / verified / shipped |
+| Open Questions | TODO: unresolved questions or none with evidence |
+| Context Capsule Version | v0 |
+| Next Step | {args.get('step_1') or 'TODO: exactly one next action'} |
+| Owner | {_arg_value(args, 'reader') or 'TODO: agent, verifier, planner, or human approver'} |
+
+## Gate Card
+| Gate Type | Required Check | Example Failure |
+|---|---|---|
+| Plan Gate | Goal and completion criteria exist before execution | acceptance criteria missing |
+| Permission Gate | Human approval before destructive/external side effects | delete/deploy/send without approval |
+| Verification Gate | No completion claim before verifier PASS | unverified done claim |
+| Handoff Gate | Next session can resume from state/evidence paths | missing session handoff |
+| Stop Gate | No endless retries after repeated failure | same blocker repeats without mutation |
+
+## Evidence Card
+| Evidence Type | Leave Behind | Example |
+|---|---|---|
+| Source Evidence | raw input and source boundary | meeting note, URL, source file |
+| Execution Evidence | observed action result | command output, generated file |
+| Verification Evidence | PASS/FAIL result | checklist, test result, reviewer output |
+| Decision Evidence | why PASS/STOP/HOLD | rationale and owner |
+| Change Evidence | before/after delta | diff, artifact hash, screenshot |
+"""
+
+
+def _c3_detail_cards_template(args: dict[str, Any]) -> str:
+    return f"""# C3 Detail Cards — Control
+
+Control asks: when does the harness intervene, what rule applies, and when does the loop stop?
+
+## Hook Plan
+| Trigger | Scope | Condition | Action | Evidence | Fallback | Owner |
+|---|---|---|---|---|---|---|
+| session:start | Context / State | active run has prior state | load or summarize state capsule | capsule version | ask for run path | agent |
+| command:* | Plan / Rule | command tries to create or validate loop | rewrite/validate loop command | command + result | show selector | agent |
+| agent:step | Execution / Evidence | file/action changes state | append observed evidence note | changed file/result | require manual evidence entry | agent/verifier |
+| agent:end | Verification / Gate | completion claim or pass wording appears | require evidence ledger update | validation output | HOLD until verifier | verifier |
+| session:end | State Preservation | run is active | write handoff and next step | handoff path | block PASS claim | agent |
+
+## Rule Block
+Do:
+- Keep source, state, evidence, and final outputs separate.
+- Record verification before saying the task passed.
+- Use action verbs and exact next actions.
+
+Don’t:
+- Do not store secrets or private credentials in artifacts.
+- Do not infer missing facts, owners, or deadlines as if they were source-backed.
+- Do not modify exit criteria or check commands to force success.
+
+Escalation:
+- Human approval before destructive, external-send, deployment, or credential-touching actions.
+- Human/verifier decision when facts are missing or standards conflict.
+- STOP after repeated no-progress without a new mutation policy.
+
+Priority:
+- Safety and source truth > verification integrity > artifact polish > speed.
+
+Deletion Rule:
+- Remove or downgrade any hook/rule that does not reduce a named failure after three reviewed uses.
+
+## Loop Contract
+| Loop Element | Required Answer |
+|---|---|
+| Loop Goal | TODO: failure this iteration reduces |
+| Loop Variable | TODO: exactly one variable changed per loop |
+| Loop State | `state/current.md`, `state/predicate-list.json`, `logs/iteration-*.md` |
+| Loop Gate | retry / stop / human approval split |
+| Loop Evidence | fail count, before/after diff, verifier output |
+| Stop Rule | {_arg_value(args, 'retirement_rule') or 'TODO: stop when marginal gain is low, intent is harmed, or budget is exhausted'} |
+| Human Escalation | {_arg_value(args, 'escalation_rule') or 'TODO: criteria for human handoff'} |
+"""
+
+
+def _context_reinjection_plan_template(args: dict[str, Any]) -> str:
+    return f"""# Context Reinjection Plan
+
+Purpose: prevent long runs, compaction, and phase changes from losing the goal, forbidden moves, PASS/STOP criteria, and evidence paths.
+
+## Trigger Rules
+| Context / Phase Signal | Recommended Action |
+|---|---|
+| under 50% context | keep state files current; no reinjection |
+| 50–70% context | create/update State Capsule before next phase |
+| 70–85% context | reinject State Capsule, remove raw context, re-check verifier criteria |
+| 85%+ context | prepare compact/session handoff, re-verify Goal/Gate before final claim |
+| phase transition | update capsule and evidence path |
+| Stop / session:end | write handoff and next safe action |
+
+## Capsule Template
+```text
+State Capsule vN
+- Goal: {_arg_value(args, 'goal') or _arg_value(args, 'outcome') or 'TODO'}
+- Don’t: {_arg_value(args, 'hard_fail') or 'TODO'}
+- PASS: {_arg_value(args, 'verify') or args.get('exit_when') or 'TODO'}
+- STOP: TODO: stop/handoff/approval criteria
+- Current Phase: TODO
+- Current State: TODO
+- Evidence Path: TODO
+- Open Questions: TODO
+- Next Step: {args.get('step_1') or 'TODO'}
+```
+
+## Reinjection Rules
+- Do not reinject full raw source by default; use a 10–20 line capsule.
+- Reinjection must not override source boundaries or forbidden context.
+- After reinjection, verify that Goal / Don’t / PASS / STOP still match the goal contract.
+
+## Evidence
+- capsule_version: TODO
+- injected_at: TODO
+- reason: TODO
+- verified_against: `state/goal-contract.md`, `state/build-spec.md`, `final/review-gap-board.md`
+"""
+
+
+def _build_spec_template(track: str, depth: str, args: dict[str, Any], run_path: Path) -> str:
+    return f"""# Build Spec Output
+
+AOC design is not complete until it becomes a buildable specification.
+
+```yaml
+root: {run_path}
+track: {track}
+depth: {depth or 'n/a'}
+create_files:
+  - state/human-intent.md
+  - state/scenario.md
+  - state/a6-detail-cards.md
+  - state/o3-detail-cards.md
+  - state/c3-detail-cards.md
+  - state/context-reinjection-plan.md
+  - state/build-spec.md
+  - final/review-gap-board.md
+  - final/aoc-harness-spec.md
+inputs:
+  - {_arg_value(args, 'artifact') or 'TODO: source artifact path or input surface'}
+outputs:
+  - final artifact
+  - evidence-backed review
+  - handoff-ready state capsule
+commands:
+  - {args.get('check_command') or 'TODO: verification command or explicit no-command reason'}
+gates:
+  - Plan Gate: goal and completion criteria exist
+  - Permission Gate: risky side effects require human approval
+  - Verification Gate: no completion without observed evidence
+  - Handoff Gate: state and evidence paths exist
+  - Stop Gate: no endless retry without mutation
+pass_condition: {_arg_value(args, 'verify') or args.get('exit_when') or 'TODO: observable PASS condition'}
+stop_condition: {_arg_value(args, 'kill_condition') or 'TODO: budget exhausted, intent harmed, repeated no-progress, or approval needed'}
+evidence_path:
+  - state/evidence-ledger.json
+  - logs/iteration-*.md
+  - final/review-report.md
+owner: {_arg_value(args, 'reader') or 'TODO: human/verifier owner'}
+```
+
+## Build Path Check
+- If `root`, `create_files`, `inputs`, `outputs`, `commands`, `gates`, `evidence_path`, or `owner` is missing, this is not build-ready.
+- If commands are intentionally absent, write the review surface that replaces them.
+"""
+
+
+def _review_gap_board_template() -> str:
+    return """# Review & Gap Board
+
+Use this board to review what the agent filled. Do not trust a generated spec just because it is complete-looking.
+
+| Gap Type | Question | Action | Status |
+|---|---|---|---|
+| Missing | Are required inputs, state, gates, or verification fields absent? | Add required fields before build | TODO |
+| Overbuilt | Is automation too complex for the actual risk/value? | Lower level or remove rules/hooks | TODO |
+| Risk | Could this touch secrets, deletion, deploy, external send, or private config? | Add Permission Gate or forbidden path | TODO |
+| Weak Evidence | Is the result believable from observed evidence? | Strengthen evidence requirement | TODO |
+| Human Needed | Does a human/verifier need to decide? | Add escalation and owner | TODO |
+| Context Drift | Could long work lose goal, forbidden moves, or PASS criteria? | Update Context Reinjection Plan | TODO |
+| No Build Path | Does the plan fail to name files, commands, outputs, or gates? | Rewrite Build Spec | TODO |
+
+## Review Rule
+- At least one of Missing / Risk / Weak Evidence / Human Needed / Context Drift / No Build Path must be explicitly reviewed before shipping.
+- Overbuilt is a warning, not always a blocker; remove only if cost exceeds expected failure reduction.
+"""
+
+
+def _aoc_harness_spec_template(track: str, depth: str) -> str:
+    return f"""# AOC Harness Spec
+
+## Sequence
+1. Human Intent
+2. Scenario
+3. A6 Detail Cards
+4. O3 Detail Cards
+5. C3 Detail Cards
+6. Context Reinjection Plan
+7. Build Spec Output
+8. Review & Gap Board
+
+## Track
+- selected_track: `{track}`
+- depth: `{depth or 'n/a'}`
+
+## AOC Contract
+- A6 turns intent into scaffold/context/plan/execution/verification/improvement structure.
+- O3 keeps work resumable with state/gates/evidence.
+- C3 places hooks/rules/loops so the harness does not drift, overclaim, or run forever.
+
+## MVP Boundary
+- This file is a design and scaffold contract.
+- It does not prove autonomous execution, install hooks, or produce external side effects.
+- PASS still requires observed verification evidence and verifier/human ownership.
+"""
 
 def _loop_spec_template(track: str, depth: str) -> str:
     return f"""# Loop Spec
@@ -1639,6 +1953,13 @@ def create_scaffold(args: dict[str, Any], **kwargs: Any) -> str:
     _write(run_path / "state" / "session-handoff.md", _session_handoff_template())
     _write(run_path / "state" / "init-check.md", _init_check_template(track, trigger_mode))
     _write(run_path / "state" / "current.md", "# Current Artifact\n\nTODO: paste or link the current artifact/draft here.\n")
+    _write(run_path / "state" / "human-intent.md", _human_intent_template(args))
+    _write(run_path / "state" / "scenario.md", _scenario_template(args))
+    _write(run_path / "state" / "a6-detail-cards.md", _a6_detail_cards_template(track, depth, args))
+    _write(run_path / "state" / "o3-detail-cards.md", _o3_detail_cards_template(args))
+    _write(run_path / "state" / "c3-detail-cards.md", _c3_detail_cards_template(args))
+    _write(run_path / "state" / "context-reinjection-plan.md", _context_reinjection_plan_template(args))
+    _write(run_path / "state" / "build-spec.md", _build_spec_template(track, depth, args, run_path))
     if track == "gs":
         _write(run_path / "state" / "research-notes.md", f"# GS Research Notes\n\n- GS depth: `{depth}`\n- Public research allowed:\n- Revenue baseline / proxy:\n- Payer evidence:\n- Buying trigger evidence:\n- ICP evidence:\n- Channel evidence:\n- Assumptions / Unknowns:\n")
     else:
@@ -1656,6 +1977,8 @@ def create_scaffold(args: dict[str, Any], **kwargs: Any) -> str:
     _write(run_path / "final" / "loop-audit.md", _loop_audit_template())
     _write(run_path / "final" / "adaptation-plan.md", _adaptation_plan_template())
     _write(run_path / "final" / "hiring-manager.md", _hiring_manager_template())
+    _write(run_path / "final" / "review-gap-board.md", _review_gap_board_template())
+    _write(run_path / "final" / "aoc-harness-spec.md", _aoc_harness_spec_template(track, depth))
     _write(run_path / "state" / "cross-run-playbook.md", _cross_run_playbook_template())
     _write(run_path / "final" / "hsd-diagram.md", _hsd_diagram_template(track, depth, args))
     _write(run_path / "final" / "harness-diagram.md", _harness_diagram_template(track, depth, args, run_path))
@@ -1665,9 +1988,9 @@ def create_scaffold(args: dict[str, Any], **kwargs: Any) -> str:
     _write(run_path / "final" / "quality-document.md", _quality_document_template(track, depth))
     _write(run_path / "final" / "user-facing-summary.md", _summary_template(run_path))
     _write(run_path / "logs" / "iteration-001.md", _iteration_template(1))
-    identity = {"model_id": str(args.get("model_id") or "unknown"), "harness_id": "loop-creator@1.6.0", "grader_id": "mixed", "task_slice": track, "regression_attribution": "unknown"}
+    identity = {"model_id": str(args.get("model_id") or "unknown"), "harness_id": "loop-creator@1.7.0", "grader_id": "mixed", "task_slice": track, "regression_attribution": "unknown"}
     fit = _fit_score(track, depth, args, risk_mode)
-    _write(run_path / "loop-creator.json", _json({"track": track, "label": TRACK_LABELS[track], "trigger_mode": trigger_mode, "risk_mode": risk_mode, "depth": depth, "grade": grade, "created_at": now.isoformat(timespec="seconds"), "source_skill": str(SKILL_ROOT), "gs_source": _source_status() if (track == "gs" and depth == "Full GS") else None, "intake": _intake_status(args, track), "hsd": {"approved": bool(args.get("approve_hsd") or args.get("allow_todo")), "diagram": "final/hsd-diagram.md"}, "control_policy": DEFAULT_CONTROL_POLICY, "identity": identity, "fit_score": fit, "eval_pack": {"path": "eval/eval_spec.yaml", "pass_policy": "pass_3_of_3" if risk_mode == "deep" else "pass_once"}, "runner_spec": "runner/loop.yaml", "loop_record": "final/loop-record.json", "published_status": str(args.get("published_status") or "draft")}))
+    _write(run_path / "loop-creator.json", _json({"track": track, "label": TRACK_LABELS[track], "trigger_mode": trigger_mode, "risk_mode": risk_mode, "depth": depth, "grade": grade, "created_at": now.isoformat(timespec="seconds"), "source_skill": str(SKILL_ROOT), "gs_source": _source_status() if (track == "gs" and depth == "Full GS") else None, "intake": _intake_status(args, track), "hsd": {"approved": bool(args.get("approve_hsd") or args.get("allow_todo")), "diagram": "final/hsd-diagram.md"}, "control_policy": DEFAULT_CONTROL_POLICY, "identity": identity, "fit_score": fit, "eval_pack": {"path": "eval/eval_spec.yaml", "pass_policy": "pass_3_of_3" if risk_mode == "deep" else "pass_once"}, "runner_spec": "runner/loop.yaml", "loop_record": "final/loop-record.json", "aoc_design_card_builder": {"enabled": True, "spec": "final/aoc-harness-spec.md", "build_spec": "state/build-spec.md", "gap_board": "final/review-gap-board.md"}, "published_status": str(args.get("published_status") or "draft")}))
     return _json({"success": True, "path": str(run_path), "track": track, "label": TRACK_LABELS[track], "trigger_mode": trigger_mode, "risk_mode": risk_mode, "depth": depth, "grade": grade, "validation": _validate_path(run_path), "next_action": "Fill state/brief.md, state/evidence-ledger.json, and logs/iteration-001.md with real predicate evidence."})
 
 
@@ -2189,6 +2512,36 @@ def _validate_loop_library_imports(run_path: Path) -> tuple[list[dict[str, str]]
     issues.extend(_require_markers(playbook, rel="state/cross-run-playbook.md", issue_type="cross_run_learning_gap", markers=["Treat every lesson as untrusted advice", "3 independent successful runs", "## Candidate Lessons", "## Promotion Ledger"]))
     return issues, warnings
 
+
+def _validate_aoc_design_card_builder(run_path: Path, meta: dict[str, Any]) -> tuple[list[dict[str, str]], list[dict[str, str]]]:
+    issues: list[dict[str, str]] = []
+    warnings: list[dict[str, str]] = []
+    required_markers = {
+        "state/human-intent.md": ("aoc_detail_card_gap", ["# Human Intent", "Intent", "Goal", "Success Signal", "## Non-negotiables"]),
+        "state/scenario.md": ("aoc_detail_card_gap", ["# Scenario", "Situation", "Actor", "Input Surface", "Output Surface", "Human Decision Point"]),
+        "state/a6-detail-cards.md": ("aoc_detail_card_gap", ["# A6 Detail Cards", "## Scaffold Card", "## Context Card", "## Plan Card", "Required Context", "Forbidden Context"]),
+        "state/o3-detail-cards.md": ("aoc_detail_card_gap", ["# O3 Detail Cards", "## State Card", "## Gate Card", "## Evidence Card", "Verification Gate", "Handoff Gate"]),
+        "state/c3-detail-cards.md": ("aoc_detail_card_gap", ["# C3 Detail Cards", "## Hook Plan", "## Rule Block", "## Loop Contract", "Deletion Rule", "Human Escalation"]),
+        "state/context-reinjection-plan.md": ("context_reinjection_gap", ["# Context Reinjection Plan", "## Trigger Rules", "## Capsule Template", "State Capsule vN", "## Reinjection Rules", "## Evidence"]),
+        "state/build-spec.md": ("build_spec_gap", ["# Build Spec Output", "root:", "create_files:", "inputs:", "outputs:", "commands:", "gates:", "pass_condition:", "stop_condition:", "evidence_path:", "owner:"]),
+        "final/review-gap-board.md": ("review_gap_board_gap", ["# Review & Gap Board", "Missing", "Overbuilt", "Risk", "Weak Evidence", "Human Needed", "Context Drift", "No Build Path"]),
+        "final/aoc-harness-spec.md": ("aoc_detail_card_gap", ["# AOC Harness Spec", "## Sequence", "Human Intent", "A6 Detail Cards", "Context Reinjection Plan", "Build Spec Output", "Review & Gap Board", "## MVP Boundary"]),
+    }
+    for rel, (issue_type, markers) in required_markers.items():
+        text = _read(run_path / rel)
+        if not text:
+            issues.append({"type": issue_type, "path": rel, "message": "required AOC design-card file missing"})
+            continue
+        issues.extend(_require_markers(text, rel=rel, issue_type=issue_type, markers=markers))
+    c3 = _read(run_path / "state" / "c3-detail-cards.md")
+    for event in ["session:start", "command:*", "agent:step", "agent:end", "session:end"]:
+        if event not in c3:
+            issues.append({"type": "aoc_detail_card_gap", "path": "state/c3-detail-cards.md", "message": f"missing Hermes hook mapping: {event}"})
+    meta_aoc = meta.get("aoc_design_card_builder") if isinstance(meta, dict) else None
+    if not isinstance(meta_aoc, dict) or not meta_aoc.get("enabled"):
+        issues.append({"type": "aoc_detail_card_gap", "path": "loop-creator.json", "message": "aoc_design_card_builder metadata missing or disabled"})
+    return issues, warnings
+
 def _validate_path(run_path: Path) -> dict[str, Any]:
     issues: list[dict[str, str]] = []
     warnings: list[dict[str, str]] = []
@@ -2199,7 +2552,7 @@ def _validate_path(run_path: Path) -> dict[str, Any]:
     depth = _normalize_depth(meta.get("depth"), track)
     grade = _normalize_grade(meta.get("grade"), track, depth)
     risk_mode = _normalize_risk_mode(meta.get("risk_mode"), track, grade)
-    required = ["state/intake.md", "state/hsd.md", "state/brief.md", "state/goal-contract.md", "state/aco-design-card.md", "state/control-policy.md", "state/predicate-list.json", "state/evidence-ledger.json", "state/failure-taxonomy.yaml", "eval/eval_spec.yaml", "eval/task.yaml", "eval/rubric.yaml", "eval/cases.jsonl", "eval/latest-result.json", "runner/loop.yaml", "state/approval-gate.md", "state/story-ledger.jsonl", "state/steering-ledger.jsonl", "state/review-receipts.jsonl", "state/session-handoff.md", "state/init-check.md", "state/current.md", "state/research-notes.md", "final/improved-draft.md", "final/review-report.md", "final/loop-record.json", "final/loop-doctor.md", "final/loop-audit.md", "final/adaptation-plan.md", "final/hiring-manager.md", "state/cross-run-playbook.md", "final/hsd-diagram.md", "final/harness-diagram.md", "final/harness-improvement-suggestions.md", "final/quick-loop-card.md", "final/clean-state-checklist.md", "final/quality-document.md", "final/user-facing-summary.md", "final/gs-harness.md" if track == "gs" else "final/harness.md"]
+    required = ["state/intake.md", "state/hsd.md", "state/brief.md", "state/goal-contract.md", "state/aco-design-card.md", "state/control-policy.md", "state/predicate-list.json", "state/evidence-ledger.json", "state/failure-taxonomy.yaml", "eval/eval_spec.yaml", "eval/task.yaml", "eval/rubric.yaml", "eval/cases.jsonl", "eval/latest-result.json", "runner/loop.yaml", "state/approval-gate.md", "state/story-ledger.jsonl", "state/steering-ledger.jsonl", "state/review-receipts.jsonl", "state/session-handoff.md", "state/init-check.md", "state/current.md", "state/human-intent.md", "state/scenario.md", "state/a6-detail-cards.md", "state/o3-detail-cards.md", "state/c3-detail-cards.md", "state/context-reinjection-plan.md", "state/build-spec.md", "state/research-notes.md", "final/improved-draft.md", "final/review-report.md", "final/loop-record.json", "final/loop-doctor.md", "final/loop-audit.md", "final/adaptation-plan.md", "final/hiring-manager.md", "final/review-gap-board.md", "final/aoc-harness-spec.md", "state/cross-run-playbook.md", "final/hsd-diagram.md", "final/harness-diagram.md", "final/harness-improvement-suggestions.md", "final/quick-loop-card.md", "final/clean-state-checklist.md", "final/quality-document.md", "final/user-facing-summary.md", "final/gs-harness.md" if track == "gs" else "final/harness.md"]
     if track == "full" or depth == "Full GS":
         required.append("final/loop-spec.md")
     if track == "gs":
@@ -2228,6 +2581,9 @@ def _validate_path(run_path: Path) -> dict[str, Any]:
     library_issues, library_warnings = _validate_loop_library_imports(run_path)
     issues.extend(library_issues)
     warnings.extend(library_warnings)
+    aoc_card_issues, aoc_card_warnings = _validate_aoc_design_card_builder(run_path, meta)
+    issues.extend(aoc_card_issues)
+    warnings.extend(aoc_card_warnings)
     story_issues, story_warnings = _validate_goal_story_artifacts(run_path, completion_claimed=_completion_claimed(run_path))
     issues.extend(story_issues)
     warnings.extend(story_warnings)

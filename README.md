@@ -163,6 +163,13 @@ state/
   session-handoff.md
   init-check.md
   current.md
+  human-intent.md
+  scenario.md
+  a6-detail-cards.md
+  o3-detail-cards.md
+  c3-detail-cards.md
+  context-reinjection-plan.md
+  build-spec.md
   research-notes.md
 eval/
   eval_spec.yaml
@@ -183,11 +190,32 @@ final/
   quick-loop-card.md
   clean-state-checklist.md
   quality-document.md
+  review-gap-board.md
+  aoc-harness-spec.md
   user-facing-summary.md
 logs/
   iteration-001.md
 loop-creator.json
 ```
+
+
+## v1.7 AOC Design Card Builder
+
+`loop-creator`는 이제 AOC 하네스 설계 디테일 카드 구조를 scaffold에 포함한다. 목적은 비개발자 기획자가 설명표를 읽는 데서 멈추지 않고, 실제 제작 가능한 하네스 명세로 내려가게 하는 것이다.
+
+생성 파일:
+
+- `state/human-intent.md` — 왜 만들고 무엇이 성공인지 고정
+- `state/scenario.md` — 언제, 누가, 무엇을 넣고, 무엇을 받는지 정의
+- `state/a6-detail-cards.md` — Scaffold / Context / Plan 카드
+- `state/o3-detail-cards.md` — State / Gate / Evidence 카드
+- `state/c3-detail-cards.md` — Hook Plan / Rule Block / Loop Contract 카드
+- `state/context-reinjection-plan.md` — 긴 작업·압축·phase 전환 때 재주입할 State Capsule 설계
+- `state/build-spec.md` — root/create_files/inputs/outputs/commands/gates/evidence/owner로 내려가는 제작 명세
+- `final/review-gap-board.md` — Missing / Overbuilt / Risk / Weak Evidence / Human Needed / Context Drift / No Build Path 검토판
+- `final/aoc-harness-spec.md` — AOC 카드 흐름과 MVP boundary 요약
+
+중요한 경계: 이 카드들은 hook 설치나 autonomous execution의 증거가 아니다. Hook Plan은 Hermes 이벤트에 매핑되는 설계 산출물이고, 실제 실행/설치는 별도 runner 또는 runtime 변경과 재시작이 필요하다.
 
 ## v1.5 Eval / Trace / Runner Layer
 

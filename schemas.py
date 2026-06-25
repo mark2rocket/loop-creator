@@ -5,7 +5,7 @@ LOOP_CREATOR_SCAFFOLD = {
     "description": (
         "Create a Loop Creator run scaffold. Use when the user wants loop-creator, "
         "standard loop, full loop, or gs loop scaffolding with required evidence, eval, failure-taxonomy, and runner-neutral spec files. "
-        "This does not execute autonomous loops; it creates the run package and templates."
+        "This does not execute autonomous loops; it creates the run package and templates, including AOC design-card builder artifacts."
     ),
     "parameters": {
         "type": "object",
@@ -38,6 +38,7 @@ LOOP_CREATOR_SCAFFOLD = {
             "retirement_rule": {"type": "string", "description": "When this loop should retire after success, duplication, staleness, or low value."},
             "kill_condition": {"type": "string", "description": "Evidence that should kill the loop because waste/risk exceeds value."},
             "manual_trial": {"type": "string", "description": "One bounded manual trial before scheduling or autonomy."},
+            "aoc_card_mode": {"type": "boolean", "description": "Generate AOC Design Card Builder artifacts. Enabled by default in v1.7+."},
         },
         "required": ["track"],
     },

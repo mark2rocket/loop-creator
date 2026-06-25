@@ -1,6 +1,6 @@
 name: loop-creator
-version: "1.6.0"
-description: Loop Creator plugin — route standard/full/gs loop runs, ask goal/control intake questions, preview HSD diagrams with verification-system design gates, scaffold ACO/control-policy/evidence files, eval packs, failure taxonomy, runner-neutral specs, model-harness-grader identity, fit scoring, quick kickoff cards, restartable predicate/story state, validate observed trace-grounded evidence and approval ledgers, summarize ACO blockers, check for upstream updates, and export Loop Library-style loop records with doctor/audit/adapt/hiring/playbook governance.
+version: "1.7.0"
+description: Loop Creator plugin — route standard/full/gs loop runs, ask goal/control intake questions, preview HSD diagrams with verification-system design gates, scaffold ACO/control-policy/evidence files, eval packs, failure taxonomy, runner-neutral specs, model-harness-grader identity, fit scoring, quick kickoff cards, restartable predicate/story state, validate observed trace-grounded evidence and approval ledgers, summarize ACO blockers, check for upstream updates, and export Loop Library-style loop records with doctor/audit/adapt/hiring/playbook governance, and generate AOC Design Card Builder artifacts for Human Intent, Scenario, A6/O3/C3 detail cards, Context Reinjection, Build Spec, and Review Gap Board.
 provides_tools:
   - loop_creator_scaffold
   - loop_creator_validate_run
